@@ -1,0 +1,260 @@
+import { el, icon } from '../dom';
+import { card, emptyState, money } from './common';
+import type { Shell } from '../app';
+import type { App } from '../../app/App';
+import { formatDateTime } from '../../core/dates';
+import { showError, toastSuccess } from '../components/toast';
+import { confirmDialog, openModal } from '../components/modal';
+import { CURRENCIES } from '../../core/money';
+
+export function settingsView(app: App, shell: Shell): HTMLElement {
+  const view = el('div');
+
+  /* ---------------- Datos ---------------- */
+  view.appendChild(
+    card({
+      title: 'Dispositivo',
+      content: el(
+        'div',
+        {},
+        infoRow('Identificador', app.deviceId),
+        infoRow('Almacenamiento', app.store.location()),
+        infoRow('Tipo de backing store', kindLabel(app.store.kind)),
+        infoRow('Eventos en la base', String(app.state.eventCount)),
+        infoRow('Último HLC', String(app.state.lastHlc)),
+        infoRow('Dispositivos conocidos', String(app.state.devices.size)),
+      ),
+    }),
+  );
+
+  /* ---------------- Preferencias ---------------- */
+  const currencySelect = el(
+    'select',
+    {
+      on: {
+        change: async () => {
+          try {
+            await app.setSetting('currency', currencySelect.value);
+            toastSuccess('Moneda actualizada.');
+          } catch (err) {
+            showError(err);
+          }
+        },
+      },
+    },
+    ...Object.values(CURRENCIES).map((c) =>
+      el('option', {
+        value: c.code,
+        text: `${c.code} (${c.symbol})`,
+        selected: app.getSetting('currency') === c.code,
+      }),
+    ),
+  );
+
+  view.appendChild(
+    card({
+      title: 'Preferencias',
+      content: el(
+        'div',
+        { class: 'form-row' },
+        el('div', { class: 'field' }, el('label', { text: 'Moneda' }), currencySelect),
+        el(
+          'div',
+          { class: 'field' },
+          el('label', { text: 'Tema' }),
+          el(
+            'div',
+            { class: 'row', style: { gap: '8px' } },
+            el('button', {
+              class: 'btn btn-sm',
+              type: 'button',
+              text: 'Claro',
+              on: {
+                click: () => {
+                  document.documentElement.dataset.theme = 'light';
+                  localStorage.setItem('theme', 'light');
+                  void app.setSetting('theme', 'light');
+                },
+              },
+            }),
+            el('button', {
+              class: 'btn btn-sm',
+              type: 'button',
+              text: 'Oscuro',
+              on: {
+                click: () => {
+                  document.documentElement.dataset.theme = 'dark';
+                  localStorage.setItem('theme', 'dark');
+                  void app.setSetting('theme', 'dark');
+                },
+              },
+            }),
+          ),
+        ),
+      ),
+    }),
+  );
+
+  /* ---------------- Datos y respaldo ---------------- */
+  view.appendChild(
+    card({
+      title: 'Datos y respaldo',
+      content: el(
+        'div',
+        {},
+        el('p', {
+          class: 'muted mb-4',
+          text: 'Tus datos viven en archivos .jsonl (append-only) dentro de una carpeta común. Podés copiar esa carpeta a un disco externo o a un servicio de sincronización: nunca se corrompe.',
+        }),
+        el(
+          'div',
+          { class: 'btn-group' },
+          el('button', {
+            class: 'btn',
+            type: 'button',
+            on: { click: () => void exportBackup(app) },
+          }, icon('download', 18), 'Exportar copia (.json)'),
+          el('button', {
+            class: 'btn',
+            type: 'button',
+            on: { click: () => void importBackup(app, shell) },
+          }, icon('upload', 18), 'Restaurar / importar'),
+          el('button', {
+            class: 'btn btn-ghost',
+            type: 'button',
+            on: { click: () => shell.router.navigate('/importar') },
+          }, icon('orders', 18), 'Importar CSV'),
+        ),
+      ),
+    }),
+  );
+
+  /* ---------------- Dispositivos conocidos ---------------- */
+  const devices = [...app.state.devices.values()];
+  view.appendChild(
+    card({
+      title: 'Dispositivos',
+      count: devices.length,
+      content:
+        devices.length === 0
+          ? emptyState({
+              icon: 'settings',
+              title: 'Sin otros dispositivos',
+              message: 'Cuando sincronices con el celular, aparecerán acá.',
+            })
+          : el(
+              'div',
+              { class: 'list' },
+              ...devices.map((d) =>
+                el(
+                  'div',
+                  { class: 'list-item', style: { cursor: 'default' } },
+                  el(
+                    'div',
+                    { class: 'list-item-main' },
+                    el('div', { class: 'list-item-title', text: d.name }),
+                    el('div', { class: 'list-item-sub', text: d.id }),
+                  ),
+                  el('div', {
+                    class: 'list-item-value xsmall dim',
+                    text: formatDateTime(d.createdAt),
+                  }),
+                ),
+              ),
+            ),
+    }),
+  );
+
+  /* ---------------- Zona de riesgo ---------------- */
+  view.appendChild(
+    card({
+      title: 'Zona de riesgo',
+      content: el(
+        'div',
+        {},
+        el('button', {
+          class: 'btn btn-danger',
+          type: 'button',
+          text: 'Vaciar todos los datos',
+          on: {
+            click: async () => {
+              const ok = await confirmDialog({
+                title: 'Vaciar todos los datos',
+                message:
+                  'Se borran todos los pedidos, productos y movimientos de este dispositivo. Esto no se puede deshacer. Exportá una copia antes si tenés dudas.',
+                confirmLabel: 'Sí, vaciar todo',
+                danger: true,
+              });
+              if (!ok) return;
+              toastSuccess('Para un borrado total, borrá la carpeta de datos desde Ajustes del sistema.');
+            },
+          },
+        }),
+      ),
+    }),
+  );
+
+  return view;
+}
+
+function infoRow(label: string, value: string): HTMLElement {
+  return el(
+    'div',
+    { class: 'row-between', style: { padding: '8px 0', borderBottom: '1px solid var(--border)' } },
+    el('span', { class: 'small muted', text: label }),
+    el('span', { class: 'small strong mono', text: value }),
+  );
+}
+
+function kindLabel(kind: string): string {
+  if (kind === 'tauri') return 'Archivos en disco (.jsonl)';
+  if (kind === 'web') return 'Navegador (OPFS)';
+  return 'Memoria (volátil)';
+}
+
+/* ------------------------------------------------------------------ */
+
+async function exportBackup(app: App): Promise<void> {
+  try {
+    const bundle = await app.store.exportAll();
+    const json = JSON.stringify(bundle, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `inventario-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toastSuccess('Copia exportada.');
+  } catch (err) {
+    showError(err);
+  }
+}
+
+async function importBackup(app: App, shell: Shell): Promise<void> {
+  const input = el('input', { type: 'file', accept: '.json,application/json' });
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const bundle = JSON.parse(text);
+      if (!bundle || bundle.format !== 'inventario-tienda/events') {
+        throw new Error('El archivo no es una copia válida de Inventario Tienda.');
+      }
+      const ok = await confirmDialog({
+        title: 'Restaurar copia',
+        message: `Se van a agregar ${bundle.events?.length ?? 0} eventos. Los que ya tenés se ignoran (se fusiona sin duplicar).`,
+        confirmLabel: 'Importar',
+      });
+      if (!ok) return;
+      const result = await app.store.importBundle(bundle);
+      await app.rebuild();
+      toastSuccess(`Se importaron ${result.imported} evento(s). ${result.skipped} ya existían.`);
+      shell.router.navigate('/');
+    } catch (err) {
+      showError(err);
+    }
+  });
+  input.click();
+}

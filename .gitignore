@@ -1,0 +1,6 @@
+dist/
+build/
+target/
+src-tauri/target/
+node_modules/
+.env
