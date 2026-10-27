@@ -273,6 +273,23 @@ export function createShell(root: HTMLElement, app: App): Shell {
     if (event.type === 'error') toast(event.message, { kind: 'error' });
   });
 
+  /* FAB de acción principal (Material Design 3). En compacto es el punto
+     de entrada principal; en medio/expandido coexiste con el topbar. */
+  const fab = el(
+    'button',
+    {
+      class: 'fab',
+      type: 'button',
+      'aria-label': 'Nuevo pedido',
+      on: {
+        click: () => router.navigate('/pedidos/nuevo'),
+      },
+    },
+    icon('plus', 20),
+    'Pedido',
+  );
+  document.body.appendChild(fab);
+
   return {
     router,
     outlet,

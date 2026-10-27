@@ -31,10 +31,13 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - `scripts/version-map.mjs`: conversión a `versionName`/`versionCode` (Android), versión numérica (Windows), `~` (Linux prereleases).
 - Instalador Windows: por definir (NSIS vs MSI).
 
-### Fase 1 — UI Material Design 3
-- Componentes: propios sobre tokens M3 (preferencia), salvo que `@material/web` aporte claramente más.
+### Fase 1 — UI Material Design 3 (EN PROGRESO)
+- Componentes: **propios sobre tokens M3** (no se agrega @material/web). Justificación: el proyecto exige "sin dependencias pesadas", @material/web tiene mantenimiento mixto y su WebView en Android puede traer problemas de versionado; componentes propios sobre tokens M3 dan el mismo resultado visual con cero dependencias nuevas.
+- Generación de colores: roles M3 (primary/on-primary/primary-container/surface-*/outline/error) derivados de un color semilla, implementación propia (sin @material/material-color-utilities por ahora) para evitar dependencia.
 - Iconos: Material Symbols como SVG inline, empaquetados localmente.
 - Fuentes: Roboto / Roboto Flex locales, sin CDN.
+- Layout: window size classes (compact <600px, medium 600–839px, expanded ≥840px); navigation bar inferior en compacto, rail en medio/expandido.
+- Pendiente: archivo de logo del usuario (no presente en el repo); se integrará como icono de app una vez se proporcione.
 
 ### Fase 3 — Android / SAF
 - Store primario: copia de trabajo en almacenamiento privado de la app + carpeta SAF como espejo bidireccional.
