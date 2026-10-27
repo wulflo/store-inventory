@@ -1,93 +1,92 @@
 # Inventario Tienda
 
-Gestión local-first para emprendimiento de indumentaria (remeras y buzos). Stack: **Tauri 2 + TypeScript vanilla + Vite**, persistencia en **Event Sourcing (JSONL append-only)**, sin base SQL `.db`.
+Local-first inventory management for apparel business (t-shirts and hoodies). Stack: **Tauri 2 + TypeScript vanilla + Vite**, persistence in **Event Sourcing (JSONL append-only)**, no SQL `.db`.
 
-## Funcionalidades
+## Features
 
-### Catálogo
-- Colecciones con temporada/año y resumen (ventas, unidades producidas, margen).
-- Productos con SKU, tipo (remera/buzo), precio y costos (tela, estampado, mano de obra, otros).
-- Colores con código hex.
-- Variantes generadas en grilla **talles × colores** (talles fijos: XS, S, M, L, XL, XXL, 3XL).
-- Stock mínimo por variante con alertas.
+### Catalog
+- Collections with season/year and summary (sales, units produced, margin).
+- Products with SKU, type (t-shirt/hoodie), price and costs (fabric, printing, labor, other).
+- Colors with hex code.
+- Variants generated in **sizes × colors** grid (fixed sizes: XS, S, M, L, XL, XXL, 3XL).
+- Minimum stock per variant with alerts.
 
-### Pedidos
-- Crear pedidos con cliente, líneas (variante + cantidad), fecha de entrega y notas.
-- Estados: pendiente, en producción, listo, entregado, cancelado.
-- Pagos parciales y estados de pago (sin pagar, seña, parcial, pagado).
-- Entrega total o parcial de líneas (genera movimiento de stock tipo "venta").
-- Validación de stock disponible con aviso (venta sin stock permitida, queda "a producir").
-- WhatsApp para clientes.
-- Impresión de detalle de pedido.
+### Orders
+- Create orders with customer, lines (variant + quantity), delivery date and notes.
+- States: pending, in production, ready, delivered, cancelled.
+- Partial payments and payment states (unpaid, deposit, partial, paid).
+- Full or partial line delivery (generates "sale" stock movement).
+- Stock availability validation with warning (sale without stock allowed, marked "to produce").
+- WhatsApp for customers.
+- Order detail printing.
 
-### Producción
-- Órdenes de producción con líneas (variante + cantidad planificada).
-- Estados: planificada, en proceso, completada, cancelada.
-- Completar producción (genera movimiento de stock tipo "producción").
-- Vinculación automática de lo producido con líneas de pedidos abiertas.
-- Sugerencias de producción basadas en pedidos pendientes vs stock disponible.
+### Production
+- Production orders with lines (variant + planned quantity).
+- States: planned, in progress, completed, cancelled.
+- Complete production (generates "production" stock movement).
+- Automatic linking of produced items to open order lines.
+- Production suggestions based on pending orders vs available stock.
 
 ### Stock
-- Stock derivado de movimientos (append-only, inmutable).
-- Stock total, reservado (comprometido por pedidos no cancelados) y disponible.
-- Movimientos: producción, venta, ajuste positivo/negativo, devolución, inicial.
-- Historial de movimientos filtrable por tipo, fecha y búsqueda.
-- Alertas de stock mínimo.
+- Stock derived from movements (append-only, immutable).
+- Total, reserved (committed by non-cancelled orders) and available stock.
+- Movements: production, sale, positive/negative adjustment, return, initial.
+- Movement history filterable by type, date and search.
+- Minimum stock alerts.
 
-### Clientes
-- Listado y detalle con datos de contacto (teléfono, email, dirección, notas).
-- Historial de pedidos y saldo por cliente.
-- Enlace directo a WhatsApp.
-- Soft delete (archivado) si tiene pedidos.
+### Customers
+- Listing and detail with contact info (phone, email, address, notes).
+- Order history and balance per customer.
+- Direct WhatsApp link.
+- Soft delete (archived) if has orders.
 
-### Gastos
-- Registro de gastos con fecha, categoría, descripción, monto y método de pago.
-- Resumen por categoría y período.
-- Editar y eliminar gastos.
+### Expenses
+- Expense registration with date, category, description, amount and payment method.
+- Summary by category and period.
+- Edit and delete expenses.
 
-### Reportes
-- Ingresos, ganancia bruta, gastos, ganancia neta por período (mes/trimestre/año/personalizado).
-- Desglose por colección y top productos más vendidos.
-- Gastos por categoría.
-- Producción del período.
+### Reports
+- Income, gross profit, expenses, net profit by period (month/quarter/year/custom).
+- Breakdown by collection and top selling products.
+- Expenses by category.
+- Production of the period.
 
-### Ajustes y datos
-- Información del dispositivo y tipo de almacenamiento.
-- Preferencias: moneda (ARS/USD/EUR) y tema claro/oscuro.
-- Exportar/importar respaldo JSON (todos los eventos).
-- Importación inicial de CSV (productos, clientes, pedidos) con mapeo de columnas.
-- **Sincronización P2P (LAN):** emparejamiento por código SAS de 6 dígitos con TLS 1.3 mutuo y certificados autofirmados fijados (pinning). Solo acepta direcciones LAN privadas; reconciliación por dominios con deduplicación por ID.
-- **Actualizaciones:** búsqueda e instalación firmadas con minisign. En escritorio se usa el actualizador de Tauri; en Android se descarga el APK, se verifica su firma y se guarda en la carpeta **Descargas** para instalarlo manualmente.
-- Zona de riesgo (vaciar datos — pendiente de implementación completa).
+### Settings and Data
+- Device info and storage type.
+- Preferences: currency (ARS/USD/EUR) and light/dark theme.
+- Export/import JSON backup (all events).
+- Initial CSV import (products, customers, orders) with column mapping.
+- **P2P Sync (LAN):** pairing via 6-digit SAS code with mutual TLS 1.3 and pinned self-signed certificates. Only accepts private LAN addresses; reconciliation by domain with deduplication by ID.
+- **Updates:** signed search and installation with minisign. Desktop uses Tauri updater; Android downloads APK, verifies signature and saves to **Downloads** folder for manual installation.
+- Risk zone (clear data — pending full implementation).
 
-### Semántica de datos
-- **IDs UUID v7** (ordenables por tiempo, sin autoincrement).
-- `created_at` / `updated_at` / `deleted_at` / `device_id` en toda entidad.
-- Dinero siempre en **centavos ARS** (enteros).
-- Cambios registrados como eventos inmutables; el estado se deriva (no se sobrescribe).
-- Resolución de conflictos: movimientos siempre se unen; campos editables LWW por campo con HLC.
+### Data Semantics
+- **UUID v7 IDs** (time-sortable, no autoincrement).
+- `created_at` / `updated_at` / `deleted_at` / `device_id` on every entity.
+- Money always in **ARS cents** (integers).
+- Changes recorded as immutable events; state is derived (not overwritten).
+- Conflict resolution: movements always merged; editable fields LWW per field with HLC.
 
-### Modo de uso
-- 100% local / offline, sin nube ni cuentas obligatorias.
-- Desarrollo web: `npm run dev` (Vite en `http://127.0.0.1:1420`).
-- App nativa: `npm run app:dev` (Tauri) / `npm run app:build`.
-- Escritorio: datos en `~/.local/share/inventario-tienda` (Linux).
-- Android: datos en el almacenamiento privado de la app (`app_data_dir`).
-- Sincronización P2P directa por LAN (TLS mutuo + emparejamiento SAS). También se puede sincronizar por agentes externos sobre una carpeta de datos (Syncthing/Drive).
-- Backup manual desde Ajustes; la rotación automática diaria aún no está.
+### Usage Mode
+- 100% local / offline, no cloud or mandatory accounts.
+- Web development: `npm run dev` (Vite at `http://127.0.0.1:1420`).
+- Native app: `npm run app:dev` (Tauri) / `npm run app:build`.
+- Desktop: data in `~/.local/share/inventario-tienda` (Linux).
+- Android: data in app private storage (`app_data_dir`).
+- Direct P2P sync over LAN (mutual TLS + SAS pairing). Can also sync via external agents over a data folder (Syncthing/Drive).
+- Manual backup from Settings; daily automatic rotation not yet implemented.
 
-### Requisitos de desarrollo
-- Node 20+ y npm.
-- Rust estable y dependencias de Tauri (WebKitGTK 4.1 en Linux).
-- Android: JDK 17, Android SDK 35/37, NDK 27 y CMake.
+### Development Requirements
+- Node 20+ and npm.
+- Rust (for Tauri).
+- Android Studio + NDK (for Android builds).
 
-## Limitaciones conocidas
-- **P2P:** transporte TLS 1.3 mutuo con pinning y emparejamiento SAS implementado y probado con tests; requiere estar en la misma LAN y direcciones privadas. Sin descubrimiento mDNS automático (se usa IP manual).
-- **Android/SAF:** funciona con almacenamiento privado; no hay selector de carpeta SAF ni espejo bidireccional.
-- **Android:** APK universal firmado, con soporte portrait y guardado del APK actualizado en Descargas (con permiso en Android 9). Pendiente validación en hardware físico.
-- **Actualizaciones:** updater firmado con minisign (base64 en `latest.json`). En Android se verifica la firma antes de guardar el APK; en escritorio usa `tauri-plugin-updater`. Requiere que el release esté publicado.
-- **Firma Windows:** sin certificado Authenticode (posible aviso de SmartScreen).
-- **CI/CD:** el workflow firma el APK Android con la keystore release, genera `.apk.sig` para el updater y publica `latest.json` con firmas reales.
-- **Testing:** 49 tests vitest + 31 tests Rust; sin Playwright/E2E. La UI se verificó manualmente en navegador y emulador Android.
-- **Dependencias:** Dependabot reporta alertas en `main`; revisar con regularidad.
-- **Logo:** falta el archivo de logo definitivo.
+### Documentation
+- See `docs/IMPLEMENTATION_MANUAL.md` for complete implementation details.
+
+## License
+
+MIT
+EOF
+echo "---"
+wc -l /home/alonso/Documentos/Repositorios/inventario-tienda/README.md

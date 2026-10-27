@@ -1,7 +1,7 @@
 {
   "$schema": "https://apps.tauri.app/schema/tauri-v2_0.json",
   "productName": "Inventario Tienda",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "identifier": "com.inventariotienda.app",
   "build": {
     "frontendDist": "../dist",
@@ -41,7 +41,7 @@
     "longDescription": "App de gestión local-first para emprendimiento de indumentaria (remeras y buzos) con Event Sourcing JSONL, sin base SQL .db.",
     "android": {
       "minSdkVersion": 28,
-      "versionCode": 1005
+      "versionCode": 1006
     }
   },
   "plugins": {
