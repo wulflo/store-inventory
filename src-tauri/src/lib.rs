@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod crypto;
 mod event_store;
 mod sync;
 mod updater;
@@ -185,7 +186,8 @@ pub fn run() {
   let mut builder = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
-    .plugin(tauri_plugin_opener::init());
+    .plugin(tauri_plugin_opener::init())
+    .manage(crypto::CryptoState::new());
 
   #[cfg(not(target_os = "android"))]
   {
@@ -230,6 +232,13 @@ pub fn run() {
       sync_auto_get,
       sync_auto_set,
       battery_status,
+      crypto::crypto_unlock,
+      crypto::crypto_lock,
+      crypto::crypto_status,
+      crypto::crypto_encrypt_text,
+      crypto::crypto_decrypt_text,
+      crypto::crypto_read_events,
+      crypto::crypto_append_event,
     ])
     .run(tauri::generate_context!())
     .expect("error al ejecutar Inventario Tienda");

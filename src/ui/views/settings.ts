@@ -11,6 +11,7 @@ import { ACCENTS, applyTheme, normalizeAccent, normalizeTheme, type AccentId, ty
 import { settingsSyncCard } from './settingsSync';
 import { settingsUpdatesCard } from './settingsUpdates';
 import { settingsAutoSyncCard } from './settingsAutoSync';
+import { settingsCryptoCard } from './settingsCrypto';
 
 export function settingsView(app: App, shell: Shell): HTMLElement {
   const view = el('div');
@@ -270,6 +271,7 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
   /* ---------------- Actualizaciones ---------------- */
   view.appendChild(settingsUpdatesCard());
   view.appendChild(settingsAutoSyncCard(app));
+  view.appendChild(settingsCryptoCard(app));
 
   return view;
 }
