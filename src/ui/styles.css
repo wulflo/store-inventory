@@ -933,14 +933,18 @@ table.data td.num {
 
 .layout {
   display: flex;
-  flex-direction: column;
+  /* Sidebar y contenido van lado a lado. Antes era `column`, así que en
+     escritorio la sidebar ocupaba todo el ancho y el contenido caía debajo. */
+  flex-direction: row;
   height: 100vh;
   max-height: 100vh;
 }
 
 .main {
   display: flex;
+  flex-direction: column;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -1640,4 +1644,532 @@ table.data td.num {
 .autocomplete-input {
   font-family: var(--font);
   font-size: var(--fs-base);
+}
+
+/* ------------------------------------------------------------------
+   22. Utilidades y componentes que faltaban tras la reescritura M3
+   ------------------------------------------------------------------
+   Auditoría: se compararon todas las clases usadas en src/**/*.ts contra
+   las definidas acá. Estas son las que se habían perdido o tenían otro
+   nombre (.empty vs .empty-state, .icon-btn vs .btn-icon, etc.).
+   ------------------------------------------------------------------ */
+
+.mb-3 {
+  margin-bottom: var(--space-3);
+}
+.hidden {
+  display: none !important;
+}
+.center {
+  text-align: center;
+}
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Grillas de KPIs / tarjetas --- */
+.grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+.grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.grid-4 {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+.grid > * {
+  min-width: 0;
+}
+
+/* --- Encabezados de pantalla --- */
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+.page-head h1 {
+  margin-bottom: var(--space-1);
+}
+.section-title {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: var(--space-2);
+}
+.hint {
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+/* --- Formularios en filas --- */
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+.form-row > :only-child {
+  grid-column: 1 / -1;
+}
+.form-row-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 599px) {
+  .form-row,
+  .form-row-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- Buscador --- */
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-box input {
+  width: 100%;
+  min-height: 48px;
+  padding: var(--space-3) var(--space-4) var(--space-3) 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-body-large);
+}
+.search-box input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+.search-icon {
+  position: absolute;
+  left: var(--space-4);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+/* --- Botones que faltaban --- */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.btn-icon:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.btn-lg {
+  min-height: 56px;
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--fs-body-large);
+  font-weight: 600;
+}
+.btn-block {
+  width: 100%;
+}
+
+/* --- Badges semánticos --- */
+.badge-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: transparent;
+}
+.badge-warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: transparent;
+}
+.badge-info,
+.badge-primary {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: transparent;
+}
+.badge-planificada {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border-color: transparent;
+}
+.badge-en_proceso {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: transparent;
+}
+.badge-completada {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: transparent;
+}
+.badge-cancelada,
+.badge-ajuste_neg,
+.badge-devolucion {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: transparent;
+}
+.badge-sin_pagar,
+.badge-sena,
+.badge-parcial {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: transparent;
+}
+.badge-pagado,
+.badge-ajuste_pos,
+.badge-inicial {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: transparent;
+}
+.badge-venta {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: transparent;
+}
+
+/* --- Contador junto al título de una tarjeta --- */
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+/* --- Estado vacío (.empty-state ya existía, faltaba el ícono) --- */
+.empty-icon {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+.empty-state .empty-icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* --- Tabla de talles × colores --- */
+.variant-grid {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.variant-grid table {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.variant-grid th,
+.variant-grid td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  vertical-align: middle;
+}
+.variant-grid thead th {
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.variant-grid tbody tr:last-child td {
+  border-bottom: none;
+}
+.variant-grid .rowhead {
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.qty-input {
+  width: 64px;
+  height: 40px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.qty-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+.qty-input.has-value {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  font-weight: 700;
+}
+.stock-hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1.2;
+}
+.stock-hint.low {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* --- Autocompletado --- */
+.autocomplete {
+  position: relative;
+  width: 100%;
+}
+/* Los inputs del autocomplete se crean sin clase: heredan el look M3 acá. */
+.autocomplete > input {
+  width: 100%;
+  min-height: 48px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-body-large);
+}
+.autocomplete > input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+.autocomplete-list {
+  position: absolute;
+  z-index: 700;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+.autocomplete-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.autocomplete-item:hover,
+.autocomplete-item.selected {
+  background: var(--primary-soft);
+}
+.autocomplete-empty {
+  padding: var(--space-3);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+/* --- Modal: cuerpo y pie --- */
+.modal > *:not(.modal-head):not(.modal-foot) {
+  padding: var(--space-4);
+  padding-top: 0;
+}
+.modal-head + * {
+  padding-top: var(--space-4) !important;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* --- Timeline de estados --- */
+.timeline {
+  display: flex;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 var(--space-4);
+}
+.timeline-step {
+  flex: 1;
+  position: relative;
+  padding-top: var(--space-5);
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+}
+.timeline-step::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--border);
+}
+.timeline-step:first-child::before {
+  left: 50%;
+}
+.timeline-step:last-child::before {
+  right: 50%;
+}
+.timeline-step::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  z-index: 1;
+}
+.timeline-step.done::before {
+  background: var(--primary);
+}
+.timeline-step.done::after {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.timeline-step.current {
+  color: var(--primary);
+  font-weight: 700;
+}
+.timeline-step.current::after {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--primary-soft);
+}
+
+/* --- Barras de progreso (.bar la usan common.ts y production.ts) --- */
+.meter-row {
+  display: block;
+}
+.meter-row > div {
+  min-width: 0;
+}
+.meter-label {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+}
+.bar {
+  height: 8px;
+  margin-top: var(--space-2);
+  border-radius: 4px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+.bar.success span {
+  background: var(--success);
+}
+.bar.warning span {
+  background: var(--warning);
+}
+.bar.danger span {
+  background: var(--danger);
+}
+
+/* --- Inputs y textareas sin clase (formularios y modales) ---
+   :where() tiene especificidad 0, así que .qty-input, .text-field o
+   .search-box input siguen mandando cuando existen. */
+:where(
+  input[type='text'],
+  input[type='number'],
+  input[type='search'],
+  input[type='date'],
+  input[type='tel'],
+  input[type='email'],
+  input[type='password'],
+  textarea
+) {
+  width: 100%;
+  min-height: 48px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-body-large);
+}
+:where(
+  input[type='text'],
+  input[type='number'],
+  input[type='search'],
+  input[type='date'],
+  input[type='tel'],
+  input[type='email'],
+  input[type='password'],
+  textarea
+):focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+/* --- FAB y acción del topbar: una sola acción principal por tamaño --- */
+@media (max-width: 839px) {
+  .topbar-new {
+    display: none;
+  }
+}
+@media (min-width: 840px) {
+  .fab {
+    display: none;
+  }
 }

@@ -11,15 +11,17 @@
 | # | Función / prueba | Resultado | Motivo / detalle |
 |---|------------------|-----------|------------------|
 | 1 | `npm run typecheck` | ✅ Verificado | Sin errores de TypeScript. |
-| 2 | `npm test` (vitest) | ✅ Verificado | 35 tests pasan (16 core + 19 version-map). |
+| 2 | `npm test` (vitest) | ✅ Verificado | 37 tests pasan (16 core + 19 version-map + 2 store). |
 | 3 | `cargo check` (desktop Linux) | ✅ Verificado | Compila sin errores (solo warnings normales). |
 | 4 | `cargo check` Android (aarch64, armv7, x86_64, i686) | ✅ Verificado | Compila para los 4 targets Android. |
 | 5 | `cargo test` (sync: identidad, peers, framing, protocolo) | ✅ Verificado | 15 tests del núcleo de sync pasan. |
 | 6 | `npm run dev` (Vite en 127.0.0.1:1420) | ✅ Verificado | Servidor levanta, app carga con datos de seed. |
-| 7 | Navegación por todas las rutas UI | ✅ Verificado | 14 rutas renderizan sin errores de consola. |
+| 7 | Navegación por todas las rutas UI | ✅ Verificado | 16 rutas renderizan sin errores de consola (incluye detalle de pedido/cliente y 404). |
 | 8 | Datos de seed (2 colecciones, 5 productos, 10 pedidos, producción, gastos) | ✅ Verificado | Se cargan y se derivan correctamente (stock, reservas, márgenes). |
-| 9 | Rediseño Material Design 3 (tokens, componentes, layout adaptativo) | ⚠️ Implementado sin verificar | CSS escrito y typecheck limpio; no hay pruebas visuales ni Playwright. |
-| 10 | Tema claro/oscuro | ⚠️ Implementado sin verificar | Tokens M3 definidos; no probado en tiempo de ejecución real. |
+| 9 | Rediseño Material Design 3 (tokens, componentes, layout adaptativo) | ✅ Verificado (manual) | Recorrido visual en navegador a 904×675: sidebar/topbar lado a lado, grillas 2×2, tablas, modales y formularios. No hay Playwright que lo automatice. |
+| 10 | Tema claro/oscuro | ✅ Verificado (manual) | Ambos temas renderizan con contraste legible en navegador. |
+| 21 | Persistencia OPFS (`WebEventStore.append`) | ✅ Verificado | Regresión cubierta por 2 tests; tras recargar, los 313 eventos del seed siguen en disco. Antes cada append borraba el archivo (bug corregido). |
+| 22 | Auditoría de clases CSS usadas vs. definidas | ✅ Verificado | 145 clases literales relevadas; se restauraron ~40 que faltaban (form-row, grid, search-box, variant-grid, autocomplete, timeline, modal-foot, badges). 0 faltantes. |
 | 11 | Backend Rust `src-tauri/` (comandos store_*) | ✅ Verificado (desktop) | `cargo check` pasa; comandos implementados. |
 | 12 | `src-tauri/` para Android | ⚠️ Compila, no verificado | `cargo check --target` pasa para 4 targets; `gen/android` es esqueleto sin SDK completo. |
 | 13 | Sincronización P2P (núcleo: identidad, peers, framing, protocolo) | ✅ Verificado | 15 tests Rust pasan. |
@@ -37,7 +39,7 @@
 
 1. **Android SDK ausente:** El directorio `/home/alonso/Android/Sdk` existe pero está vacío. `tauri android init` falla. `src-tauri/gen/android` es un esqueleto no verificado. Se necesita instalar Android SDK/NDK completo para compilar y probar Android.
 2. **Crypto para Android (`ring`):** El crate `ring` (dependencia de rustls) no compila para Android por falta de ensamblador pregenerado. El transporte TLS 1.3 mutuo de sincronización P2P no está implementado para Android.
-3. **Identificador de la app:** `com.inventariotienda.app` está definido pero **no confirmado por el usuario**. No podrá cambiarse después de publicar sin romper actualizaciones.
+3. **Identificador de la app:** `com.inventariotienda.app` ya termina en `.app` (lo pedido por el usuario); queda confirmar el prefijo exacto antes del primer release. No podrá cambiarse después de publicar sin romper actualizaciones en Android.
 4. **Secretos de release:** No hay claves de firmante (updater, Windows Authenticode, Android keystore). Los builds de release se producirían sin firmar (SmartScreen en Windows; Android no se puede actualizar sin keystore consistente).
 5. **Logo:** El usuario mencionó un logo adjuntado, pero no hay archivo de ícono de app en el repositorio.
 
@@ -48,7 +50,7 @@
 1. Confirmar el `identifier` de la app (`com.inventariotienda.app`) o cambiarlo antes del primer release.
 2. Generar la clave del updater (`npm run tauri signer generate`) y la keystore Android (`keytool`); respaldar la keystore.
 3. Cargar los secretos en GitHub Environment `release` (required reviewers, restricción a tags `v*`).
-4. Definir OWNER/REPO de GitHub para releases y actualizaciones.
+4. ~~Definir OWNER/REPO~~ → resuelto: `wulflo/store-inventory`; `gh` autenticado como `wulflo` (scopes `repo`, `workflow`). Faltan cargar los secretos de firma (ver más arriba).
 5. Instalar Android SDK/NDK completo para compilar y probar Android (API 28, 34, más reciente).
 6. Ejecutar `npm run tauri dev` para probar la app nativa en desktop (después de completar `src-tauri/`).
 7. Ejecutar Playwright / E2E para cubrir las vistas y generar capturas en `docs/qa/screenshots/`.

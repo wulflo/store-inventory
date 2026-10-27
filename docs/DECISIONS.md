@@ -67,11 +67,19 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - `release.yml`: tag `v*.*.*`, verify + build linux/windows/android + publish (draft → publish).
 - Secrets: GitHub Environment `release` con required reviewers.
 
+### Hotfix de auditoría de UI y persistencia (fase 1/7)
+- **Pérdida de datos en navegador:** `WebEventStore.append` usaba `createWritable()` sin `keepExistingData`, que trunca el `.jsonl` en cada escritura. Ahora escribe al final con posición explícita y tiene fallback de reescritura. Regresión cubierta en `tests/store.test.ts`.
+- **Layout de escritorio:** `.layout` estaba en `flex-direction: column`, por lo que la sidebar y el contenido se apilaban a partir de 600 px. Ahora es `row` y `.main` es `column`.
+- **Utilidades CSS perdidas:** la reescritura M3 no incluía `.grid*`, `.form-row*`, `.search-box`, `.variant-grid`, `.qty-input`, `.autocomplete*`, `.timeline`, `.modal-foot`, `.empty*`, `.btn-icon`, `.page-head`, `.section-title`, `.bar`, `.count` ni varios badges. Se restauraron con tokens M3 (sección 22 de `styles.css`).
+- **Acción principal:** en compacto/medio manda el FAB; en expandido manda el botón del topbar (se oculta el duplicado).
+- **Navegación:** "Importar datos" se agregó al menú "Más" de móvil y se resalta en la sidebar; atajos corregidos (`i` → Importar, `g` → Gastos, `r` → Reportes, `a` → Ajustes).
+- **Textos:** se eliminó el único texto en inglés del dashboard y los chips de pago ahora muestran "Seña"/"Pago parcial".
+
 ## Identificador definitivo (fase 3)
 - `identifier` / `applicationId`: `com.inventariotienda.app` (definido en src-tauri/tauri.conf.json y gen/android). **No podrá cambiarse luego sin romper las actualizaciones en Android.** El usuario debe confirmar este valor.
 
 ## Decisiones pendientes (requieren input del usuario)
-- OWNER/REPO de GitHub para releases y updater.
+- ~~OWNER/REPO de GitHub~~ → `wulflo/store-inventory` (confirmado por `git remote` y `gh auth status`).
 - Certificado de firma Windows (Authenticode) o construir sin firmar (SmartScreen).
 - Keystore Android: generar y respaldar (si se pierde, no se puede actualizar la app instalada).
 - Android SDK completo: no presente en el entorno (directorio vacío). `src-tauri/gen/android` es un esqueleto no verificado; se generará con `tauri android init` cuando el SDK esté disponible.

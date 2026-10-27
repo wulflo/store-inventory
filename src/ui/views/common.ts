@@ -84,7 +84,7 @@ export function emptyState(options: {
 }): HTMLElement {
   return el(
     'div',
-    { class: 'empty' },
+    { class: 'empty-state' },
     el('div', { class: 'empty-icon' }, icon(options.icon ?? 'box', 26)),
     el('h3', { text: options.title }),
     options.message ? el('p', { text: options.message }) : null,

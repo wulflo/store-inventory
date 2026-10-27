@@ -65,7 +65,7 @@ export function dashboardView(app: App, shell: Shell): HTMLElement {
         ? emptyState({
             icon: 'check',
             title: 'Nada para entregar hoy',
-            message: 'When you schedule a delivery for today, it shows up here.',
+            message: 'Cuando agendes una entrega para hoy, va a aparecer acá.',
           })
         : el(
             'div',
