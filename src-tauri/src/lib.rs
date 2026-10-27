@@ -185,7 +185,10 @@ fn sync_remove_peer(state: tauri::State<'_, SyncManager>, device_id: String) -> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let mut builder = tauri::Builder::default();
+  let mut builder = tauri::Builder::default()
+    .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_fs::init())
+    .plugin(tauri_plugin_opener::init());
 
   #[cfg(not(target_os = "android"))]
   {
