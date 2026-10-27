@@ -1,4 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
+import QRCode from 'qrcode';
+import jsQR from 'jsqr';
 import type { App } from '../../app/App';
 import { formatDateTime } from '../../core/dates';
 import { openModal } from '../components/modal';
@@ -48,6 +50,19 @@ interface PendingPairing {
   expires_at: number;
 }
 
+interface DiscoveredPeer {
+  device_id: string;
+  name: string;
+  fingerprint: string;
+  address: string;
+  ip: string;
+  sync_port: number;
+  pairing_port: number;
+  pairing_active: boolean;
+  last_seen: number;
+  paired: boolean;
+}
+
 function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
@@ -71,11 +86,13 @@ export function settingsSyncCard(app: App): HTMLElement {
   let info: SyncLocalInfo | null = null;
   let peers: Peer[] = [];
   let pending: PendingPairing | null = null;
+  let discovered: DiscoveredPeer[] = [];
   let busy = false;
   let listening = false;
   let addressDraft = '';
   let pollTimer: number | null = null;
   let message = '';
+  let qrDataUrl = '';
 
   const body = el('div');
 
@@ -107,6 +124,11 @@ export function settingsSyncCard(app: App): HTMLElement {
     info = await invoke<SyncLocalInfo>('sync_local_info', { name: localName(app) });
     peers = await invoke<Peer[]>('sync_list_peers');
     pending = await invoke<PendingPairing | null>('sync_pair_pending');
+    try {
+      discovered = await invoke<DiscoveredPeer[]>('sync_discovered');
+    } catch {
+      discovered = [];
+    }
     listening = Boolean(pending) || listening;
   }
 
@@ -183,12 +205,15 @@ export function settingsSyncCard(app: App): HTMLElement {
     if (!(await ensureServer())) return;
     setBusy(true);
     try {
-      const result = await invoke<{ info: SyncLocalInfo; expires_at: number }>(
-        'sync_pair_listen_start',
-        { name: localName(app) },
-      );
+      const result = await invoke<{
+        info: SyncLocalInfo;
+        expires_at: number;
+        token: string;
+        qr_payload: string;
+      }>('sync_pair_listen_start', { name: localName(app) });
       info = result.info;
       listening = true;
+      qrDataUrl = await QRCode.toDataURL(result.qr_payload, { width: 220, margin: 1 });
       message = 'Esperando a que el otro dispositivo se conecte…';
       startPolling();
     } catch (err) {
@@ -206,6 +231,7 @@ export function settingsSyncCard(app: App): HTMLElement {
     }
     listening = false;
     pending = null;
+    qrDataUrl = '';
     stopPolling();
     message = '';
     render();
@@ -268,6 +294,141 @@ export function settingsSyncCard(app: App): HTMLElement {
     }
     pending = null;
     await stopListen();
+  }
+
+  async function pairDiscovered(peer: DiscoveredPeer): Promise<void> {
+    addressDraft = peer.address;
+    await connectTo(peer.address);
+  }
+
+  async function connectQr(payload: string): Promise<void> {
+    if (!(await ensureServer())) return;
+    setBusy(true);
+    message = 'Emparejando por código QR…';
+    try {
+      const peer = await invoke<Peer>('sync_pair_qr_connect', {
+        name: localName(app),
+        payload,
+      });
+      pending = null;
+      listening = false;
+      stopPolling();
+      message = `${peer.name} quedó emparejado.`;
+      toastSuccess('Dispositivo emparejado.');
+      await load();
+    } catch (err) {
+      showError(err);
+      message = '';
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function scanQrFromFile(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        const code = jsQR(data.data, data.width, data.height);
+        if (!code?.data) {
+          showError(new Error('No se encontró un código QR en la imagen.'));
+          return;
+        }
+        void connectQr(code.data);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        showError(new Error('No se pudo leer la imagen.'));
+      };
+      img.src = url;
+    });
+    input.click();
+  }
+
+  async function scanQrFromCamera(): Promise<void> {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showError(new Error('La cámara no está disponible en este dispositivo.'));
+      return;
+    }
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+      });
+    } catch (err) {
+      showError(err);
+      return;
+    }
+    const video = el('video', {
+      autoplay: true,
+      playsinline: true,
+      style: { width: '100%', borderRadius: '8px' },
+    }) as HTMLVideoElement;
+    video.srcObject = stream;
+    const hint = el('p', {
+      class: 'small muted',
+      text: 'Apuntá la cámara al código QR del otro dispositivo.',
+    });
+    const modal = openModal({
+      title: 'Escanear código QR',
+      body: el('div', {}, video, hint),
+      actions: [
+        el('button', {
+          class: 'btn btn-ghost',
+          type: 'button',
+          text: 'Cancelar',
+          on: {
+            click: () => {
+              stream?.getTracks().forEach((t) => t.stop());
+              modal.close();
+            },
+          },
+        }),
+      ],
+    });
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    let raf = 0;
+    const tick = (): void => {
+      if (video.readyState >= video.HAVE_ENOUGH_DATA && ctx) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(data.data, data.width, data.height);
+        if (code?.data) {
+          cancelAnimationFrame(raf);
+          stream?.getTracks().forEach((t) => t.stop());
+          modal.close();
+          void connectQr(code.data);
+          return;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    video.onloadedmetadata = () => {
+      void video.play().catch(() => {});
+      raf = requestAnimationFrame(tick);
+    };
   }
 
   async function syncPeer(peer: Peer): Promise<void> {
@@ -394,6 +555,22 @@ export function settingsSyncCard(app: App): HTMLElement {
   };
   window.addEventListener('inventario:sync-updated', onSyncUpdated);
 
+  const onDiscovery = (event: Event): void => {
+    const detail = (event as CustomEvent).detail;
+    if (Array.isArray(detail)) {
+      discovered = detail as DiscoveredPeer[];
+      render();
+    } else {
+      void invoke<DiscoveredPeer[]>('sync_discovered')
+        .then((list) => {
+          discovered = list;
+          render();
+        })
+        .catch(() => {});
+    }
+  };
+  window.addEventListener('inventario:sync-discovery', onDiscovery);
+
   function identityBlock(current: IdentityInfo): HTMLElement {
     return el(
       'div',
@@ -516,6 +693,25 @@ export function settingsSyncCard(app: App): HTMLElement {
         disabled: busy,
         on: { click: () => void startListen() },
       }, icon('download', 18), 'Mostrar mi código y esperar'),
+      el('div', { class: 'sync-or' }, el('span', { text: 'o' })),
+      el(
+        'div',
+        { class: 'btn-group', style: { gap: '8px', flexWrap: 'wrap' } },
+        el('button', {
+          class: 'btn btn-sm',
+          type: 'button',
+          disabled: busy,
+          text: 'Escanear QR (archivo)',
+          on: { click: () => scanQrFromFile() },
+        }),
+        el('button', {
+          class: 'btn btn-sm',
+          type: 'button',
+          disabled: busy,
+          text: 'Escanear QR (cámara)',
+          on: { click: () => void scanQrFromCamera() },
+        }),
+      ),
     );
   }
 
@@ -526,8 +722,15 @@ export function settingsSyncCard(app: App): HTMLElement {
       el('div', { class: 'sync-waiting' }, el('span', { class: 'sync-spinner' })),
       el('p', {
         class: 'small',
-        text: 'Esperando a que el otro dispositivo se conecte. Mantené esta pantalla abierta.',
+        text: 'Esperando a que el otro dispositivo se conecte. Mostrá este código QR o el código de 6 dígitos.',
       }),
+      qrDataUrl
+        ? el('img', {
+            src: qrDataUrl,
+            alt: 'Código QR de emparejamiento',
+            style: { width: '220px', height: '220px', margin: '8px auto', display: 'block' },
+          })
+        : null,
       el(
         'button',
         {
@@ -537,6 +740,51 @@ export function settingsSyncCard(app: App): HTMLElement {
           text: 'Cancelar espera',
           on: { click: () => void stopListen() },
         },
+      ),
+    );
+  }
+
+  function discoveredBlock(): HTMLElement {
+    if (discovered.length === 0) {
+      return el('div');
+    }
+    return el(
+      'div',
+      { class: 'sync-discovered' },
+      el('div', { class: 'sync-peers-head' },
+        el('span', { class: 'small strong', text: 'Dispositivos en la red' }),
+      ),
+      ...discovered.map((peer) =>
+        el(
+          'div',
+          { class: 'sync-peer' },
+          el(
+            'div',
+            { class: 'sync-peer-main' },
+            el('div', { class: 'sync-peer-name', text: peer.name }),
+            el('div', {
+              class: 'small mono muted sync-wrap',
+              text: peer.address,
+            }),
+            el('div', {
+              class: 'xsmall dim',
+              text: peer.paired ? 'Ya emparejado' : peer.pairing_active ? 'Listo para emparejar' : 'Disponible',
+            }),
+          ),
+          el(
+            'div',
+            { class: 'sync-peer-actions' },
+            peer.paired
+              ? el('span', { class: 'small muted', text: 'Emparejado' })
+              : el('button', {
+                  class: 'btn btn-sm btn-primary',
+                  type: 'button',
+                  disabled: busy,
+                  text: 'Emparejar',
+                  on: { click: () => void pairDiscovered(peer) },
+                }),
+          ),
+        ),
       ),
     );
   }
@@ -646,6 +894,7 @@ export function settingsSyncCard(app: App): HTMLElement {
       }),
       el('div', { class: 'sync-divider' }),
       pending ? pendingBlock() : listening ? listeningBlock() : pairingIdleBlock(),
+      discoveredBlock(),
       message
         ? el('p', {
             class: 'small sync-message',
@@ -689,6 +938,7 @@ export function settingsSyncCard(app: App): HTMLElement {
       stopPolling();
       observer.disconnect();
       window.removeEventListener('inventario:sync-updated', onSyncUpdated);
+      window.removeEventListener('inventario:sync-discovery', onDiscovery);
     }
   });
   observer.observe(document.body, { childList: true, subtree: true });

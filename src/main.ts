@@ -103,6 +103,14 @@ async function boot(): Promise<void> {
     app.getSettingJson<string>('accent', localStorage.getItem('accent') ?? 'blue'),
   );
 
+  /* --- Idioma --- */
+  try {
+    const { setLanguage } = await import('./core/i18n');
+    setLanguage(app.getSettingJson<string>('language', 'es') === 'en' ? 'en' : 'es');
+  } catch {
+    /* best-effort */
+  }
+
   /* --- Registro del dispositivo --- */
   if (!app.state.devices.has(deviceId)) {
     await app.emit('Device.Registered', {
@@ -125,6 +133,22 @@ async function boot(): Promise<void> {
         .then(() => window.dispatchEvent(new CustomEvent('inventario:sync-updated')))
         .catch((err) => console.error('No se pudo recargar tras sincronizar', err));
     });
+    await listen('sync-discovery', (event) => {
+      window.dispatchEvent(
+        new CustomEvent('inventario:sync-discovery', { detail: event.payload }),
+      );
+      void import('./sync/autoSync').then((mod) => mod.onPeerDiscovered());
+    });
+    await listen('sync-peers-updated', (event) => {
+      window.dispatchEvent(
+        new CustomEvent('inventario:sync-peers-updated', { detail: event.payload }),
+      );
+    });
+    await listen('sync-pairing-completed', (event) => {
+      window.dispatchEvent(
+        new CustomEvent('inventario:sync-pairing-completed', { detail: event.payload }),
+      );
+    });
 
     // Auto-sync
     try {
@@ -133,11 +157,19 @@ async function boot(): Promise<void> {
       await loadConfig();
       await refreshBattery();
       startAutoSync();
-      // Auto-backup al abrir si no hay backup de hoy
+
+      // La app queda visible en la LAN desde el arranque (como Syncthing), sin
+      // que el usuario tenga que pulsar "Activar" en Ajustes.
       const { invoke } = await import('@tauri-apps/api/core');
+      const currentName =
+        app.state.devices.get(deviceId)?.name?.trim() || deviceName();
+      invoke('sync_start', { name: currentName }).catch((err) => {
+        console.warn('No se pudo iniciar la sincronización automática', err);
+      });
+
+      // Auto-backup al abrir si no hay backup de hoy
       const root = (store as TauriEventStore).getRoot();
       if (root) {
-        const cfg = await invoke<any>('sync_auto_get', { root });
         // backup automático respetando modo
         invoke('backup_run_daily', { root, force: false }).catch(() => {});
       }

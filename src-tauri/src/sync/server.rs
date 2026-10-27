@@ -384,6 +384,7 @@ pub async fn start_pairing_server(
   sync_port: u16,
   registry: Arc<Mutex<PairingRegistry>>,
   ttl_ms: u64,
+  pairing_token: Option<String>,
 ) -> Result<PairingServerHandle, String> {
   let listener = TcpListener::bind(("0.0.0.0", PAIRING_PORT))
     .await
@@ -406,12 +407,14 @@ pub async fn start_pairing_server(
               let config = Arc::clone(&config);
               let registry = Arc::clone(&registry);
               let identity = identity.clone();
+              let pairing_token = pairing_token.clone();
               tokio::spawn(async move {
                 if let Ok(pending) = crate::sync::pairing::accept_pairing(
                   &identity,
                   tcp,
                   sync_port,
                   config,
+                  pairing_token.as_deref(),
                 ).await {
                   registry.lock().unwrap_or_else(|e| e.into_inner()).add(pending);
                 }

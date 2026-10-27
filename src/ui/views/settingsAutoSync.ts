@@ -96,7 +96,7 @@ export function settingsAutoSyncCard(app: any): HTMLElement {
         const { invoke } = await import('@tauri-apps/api/core');
         const root = (app.store as TauriEventStore)?.getRoot();
         if (!root) return toast('Sin carpeta de datos', { kind: 'error' });
-        await invoke('sync_all');
+        await invoke('sync_now');
         toast('Sincronización completada', { kind: 'success' });
       } catch (e: any) {
         toast(e?.message || String(e), { kind: 'error' });

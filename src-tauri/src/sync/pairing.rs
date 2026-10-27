@@ -1,9 +1,11 @@
 use crate::sync::identity::{
   cert_der_to_pem, device_id_from_cert, fingerprint_from_der, sas_code_canonical, Identity,
 };
+use crate::sync::net::validate_peer_addr;
 use crate::sync::tls;
 use crate::sync::framing::FrameType;
 use crate::sync::wire::{read_json, write_json};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -36,6 +38,10 @@ pub struct PairHello {
   /// Puerto donde este dispositivo escucha sincronización normal.
   pub sync_port: u16,
   pub protocol_version: u32,
+  /// Token de un solo uso incluido en el QR. Si coincide, el lado que muestra
+  /// el QR confía automáticamente (el secreto solo pudo leerse del QR).
+  #[serde(default)]
+  pub pair_token: Option<String>,
 }
 
 /** Candidato pendiente de confirmación manual por el usuario. */
@@ -52,6 +58,61 @@ pub struct PendingPairing {
   pub cert_pem: String,
   pub created_at: u64,
   pub expires_at: u64,
+  /// El peer demostró conocer el token del QR de este dispositivo.
+  #[serde(default)]
+  pub verified: bool,
+}
+
+/** Contenido del QR de emparejamiento. */
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairQrPayload {
+  pub v: u32,
+  pub app: String,
+  /// Dirección IP:puerto del servidor de emparejamiento.
+  pub addr: String,
+  /// Huella SHA-256 del certificado del dispositivo que muestra el QR.
+  pub fp: String,
+  pub id: String,
+  pub name: String,
+  /// Secreto de un solo uso; expira junto con la ventana de emparejamiento.
+  pub token: String,
+}
+
+const QR_PREFIX: &str = "inventario-tienda://pair?d=";
+
+impl PairQrPayload {
+  pub fn encode(&self) -> Result<String, String> {
+    let json = serde_json::to_vec(self).map_err(|e| format!("QR inválido: {e}"))?;
+    Ok(format!("{QR_PREFIX}{}", URL_SAFE_NO_PAD.encode(json)))
+  }
+
+  /** Acepta el formato con prefijo o el JSON crudo (por si se pegó a mano). */
+  pub fn decode(input: &str) -> Result<Self, String> {
+    let text = input.trim();
+    if text.is_empty() {
+      return Err("El QR está vacío.".into());
+    }
+    let json = if let Some(encoded) = text.strip_prefix(QR_PREFIX) {
+      URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| "El QR de emparejamiento está dañado.".to_string())?
+    } else {
+      text.as_bytes().to_vec()
+    };
+    let payload: PairQrPayload =
+      serde_json::from_slice(&json).map_err(|_| "El código QR no es de Inventario Tienda.".to_string())?;
+    if payload.app != "inventario-tienda" || payload.v != 1 {
+      return Err("El QR pertenece a una versión incompatible de la app.".into());
+    }
+    if payload.id.trim().is_empty()
+      || payload.fp.trim().is_empty()
+      || payload.token.trim().len() < 16
+    {
+      return Err("El QR de emparejamiento está incompleto o es inválido.".into());
+    }
+    validate_peer_addr(&payload.addr, PAIRING_PORT)?;
+    Ok(payload)
+  }
 }
 
 #[derive(Default)]
@@ -76,6 +137,10 @@ impl PairingRegistry {
     self.pending.remove(device_id)
   }
 
+  pub fn clear(&mut self) {
+    self.pending.clear();
+  }
+
   pub fn list(&self) -> Vec<PendingPairing> {
     self.pending.values().cloned().collect()
   }
@@ -90,13 +155,14 @@ impl PairingRegistry {
   }
 }
 
-fn our_hello(identity: &Identity, sync_port: u16) -> PairHello {
+fn our_hello(identity: &Identity, sync_port: u16, pair_token: Option<&str>) -> PairHello {
   PairHello {
     device_id: identity.device_id.clone(),
     name: identity.name.clone(),
     fingerprint: identity.fingerprint(),
     sync_port,
     protocol_version: 1,
+    pair_token: pair_token.map(str::to_string),
   }
 }
 
@@ -121,6 +187,7 @@ pub async fn accept_pairing(
   tcp: TcpStream,
   sync_port: u16,
   config: Arc<rustls::ServerConfig>,
+  expected_token: Option<&str>,
 ) -> Result<PendingPairing, String> {
   let remote_ip = tcp
     .peer_addr()
@@ -146,7 +213,22 @@ pub async fn accept_pairing(
   }
   validate_hello(&hello, &peer_der)?;
 
-  write_json(&mut stream, FrameType::Handshake, &our_hello(identity, sync_port)).await?;
+  let verified = match (expected_token, hello.pair_token.as_deref()) {
+    (Some(expected), Some(received)) if !expected.is_empty() => {
+      // Comparación en tiempo constante para no filtrar el token por timing.
+      let a = expected.as_bytes();
+      let b = received.as_bytes();
+      a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    }
+    _ => false,
+  };
+
+  write_json(
+    &mut stream,
+    FrameType::Handshake,
+    &our_hello(identity, sync_port, None),
+  )
+  .await?;
 
   let sas = sas_code_canonical(
     &identity.cert_der,
@@ -164,6 +246,7 @@ pub async fn accept_pairing(
     cert_pem: cert_der_to_pem(&peer_der),
     created_at: now,
     expires_at: now + PAIRING_TTL_MS,
+    verified,
   })
 }
 
@@ -172,6 +255,7 @@ pub async fn connect_pairing(
   identity: &Identity,
   addr: SocketAddr,
   sync_port: u16,
+  pair_token: Option<&str>,
 ) -> Result<PendingPairing, String> {
   let tcp = TcpStream::connect(addr)
     .await
@@ -193,7 +277,12 @@ pub async fn connect_pairing(
     .map(|c| c.as_ref().to_vec())
     .ok_or_else(|| "El peer no presentó certificado.".to_string())?;
 
-  write_json(&mut stream, FrameType::Handshake, &our_hello(identity, sync_port)).await?;
+  write_json(
+    &mut stream,
+    FrameType::Handshake,
+    &our_hello(identity, sync_port, pair_token),
+  )
+  .await?;
   let (kind, hello): (FrameType, PairHello) = read_json(&mut stream).await?;
   if kind != FrameType::Handshake {
     return Err("Se esperaba un saludo de emparejamiento.".into());
@@ -216,6 +305,9 @@ pub async fn connect_pairing(
     cert_pem: cert_der_to_pem(&peer_der),
     created_at: now,
     expires_at: now + PAIRING_TTL_MS,
+    // El iniciador ya conoce el token; la verificación real la hace el lado
+    // que muestra el QR. Para el iniciador el QR es la confirmación.
+    verified: pair_token.is_some(),
   })
 }
 
@@ -233,6 +325,7 @@ mod tests {
       cert_pem: "-----BEGIN CERTIFICATE-----".into(),
       created_at: now_ms(),
       expires_at,
+      verified: false,
     }
   }
 
@@ -266,13 +359,13 @@ mod handshake_tests {
       let identity = server_identity.clone();
       async move {
         let (tcp, _) = listener.accept().await.unwrap();
-        accept_pairing(&identity, tcp, SYNC_PORT, config)
+        accept_pairing(&identity, tcp, SYNC_PORT, config, None)
           .await
           .unwrap()
       }
     });
 
-    let client = connect_pairing(&client_identity, addr, SYNC_PORT)
+    let client = connect_pairing(&client_identity, addr, SYNC_PORT, None)
       .await
       .unwrap();
     let server = server.await.unwrap();

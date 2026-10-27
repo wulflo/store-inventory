@@ -112,7 +112,7 @@ export async function runAutoSync(reason: string): Promise<void> {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     // Sync all peers
-    const result = await invoke<any>('sync_all');
+    const result = await invoke<any>('sync_now');
     lastSyncAt = Date.now();
     consecutiveFailures = 0;
     console.info(`Auto-sync (${reason}): OK`, result);
@@ -152,6 +152,12 @@ export function onStoreAppended(): void {
   // Evitar bucle: solo disparar si no estamos en medio de un sync
   if (isSyncing) return;
   scheduleSync('change');
+}
+
+/** Un dispositivo apareció en la LAN: intentamos sincronizar sin esperar al periódico. */
+export function onPeerDiscovered(): void {
+  if (isSyncing) return;
+  scheduleSync('discovery');
 }
 
 export function getConfig(): SyncAutoConfig {

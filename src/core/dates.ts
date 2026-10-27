@@ -1,3 +1,4 @@
+import { getLanguage } from './i18n';
 /**
  * Fechas en español rioplatense. Todo interno en ms epoch UTC.
  * Solo la capa de presentación convierte a "día local".
@@ -51,45 +52,45 @@ export function daysBetween(a: number, b: number): number {
   return Math.round((startOfDay(b) - startOfDay(a)) / MS_DAY);
 }
 
-const FMT_DATE = new Intl.DateTimeFormat('es-AR', {
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-});
-const FMT_DATE_SHORT = new Intl.DateTimeFormat('es-AR', {
-  day: '2-digit',
-  month: 'short',
-});
-const FMT_DATETIME = new Intl.DateTimeFormat('es-AR', {
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-});
-const FMT_WEEKDAY = new Intl.DateTimeFormat('es-AR', {
-  weekday: 'long',
-  day: 'numeric',
-  month: 'long',
-});
+
+function dateLocale(): string {
+  return getLanguage() === 'en' ? 'en-US' : 'es-AR';
+}
 
 export function formatDate(ts?: number): string {
   if (!ts) return '—';
-  return FMT_DATE.format(new Date(ts));
+  return new Intl.DateTimeFormat(dateLocale(), {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(new Date(ts));
 }
 
 export function formatDateShort(ts?: number): string {
   if (!ts) return '—';
-  return FMT_DATE_SHORT.format(new Date(ts));
+  return new Intl.DateTimeFormat(dateLocale(), {
+    day: '2-digit',
+    month: 'short',
+  }).format(new Date(ts));
 }
 
 export function formatDateTime(ts?: number): string {
   if (!ts) return '—';
-  return FMT_DATETIME.format(new Date(ts));
+  return new Intl.DateTimeFormat(dateLocale(), {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(ts));
 }
 
 export function formatWeekday(ts: number): string {
-  return FMT_WEEKDAY.format(new Date(ts));
+  return new Intl.DateTimeFormat(dateLocale(), {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(ts));
 }
 
 /** "hoy", "mañana", "hace 3 días", "en 2 días", o la fecha. */

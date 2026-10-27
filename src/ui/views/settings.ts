@@ -8,6 +8,7 @@ import { confirmDialog, openModal } from '../components/modal';
 import { CURRENCIES } from '../../core/money';
 import { APP_VERSION } from '../../core/version';
 import { ACCENTS, applyTheme, normalizeAccent, normalizeTheme, type AccentId, type ThemeName } from '../theme';
+import { getLanguage, setLanguage, type Language } from '../../core/i18n';
 import { settingsSyncCard } from './settingsSync';
 import { settingsUpdatesCard } from './settingsUpdates';
 import { settingsAutoSyncCard } from './settingsAutoSync';
@@ -136,6 +137,24 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
           { class: 'field', style: { gridColumn: '1 / -1' } },
           el('label', { text: 'Color de acento' }),
           accentGrid,
+        ),
+        el('div', { class: 'field' },
+          el('label', { text: 'Idioma' }),
+          (() => {
+            const select = el('select', {
+              on: {
+                change: () => {
+                  setLanguage(select.value as Language);
+                  void app.setSetting('language', select.value).catch(showError);
+                  toastSuccess('Idioma actualizado. Recargá la vista para ver los cambios.');
+                },
+              },
+            },
+              el('option', { value: 'es', text: 'Español', selected: getLanguage() === 'es' }),
+              el('option', { value: 'en', text: 'English', selected: getLanguage() === 'en' }),
+            );
+            return select;
+          })(),
         ),
       ),
     }),

@@ -1,18 +1,25 @@
 use crate::sync::client;
+use crate::sync::discovery::{
+  start_discovery, DiscoveredPeer, DiscoveryAnnounce, DiscoveryHandle,
+};
 use crate::sync::identity::{cert_der_to_pem, fingerprint_from_der, identity_dir, Identity};
-use crate::sync::net::{local_lan_addresses, validate_peer_addr};
+use crate::sync::net::{
+  local_lan_addresses, preferred_lan_ipv4, validate_peer_addr,
+};
 use crate::sync::pairing::{
-  connect_pairing, now_ms, PendingPairing, PairingRegistry, PAIRING_PORT, PAIRING_TTL_MS,
-  SYNC_PORT,
+  connect_pairing, now_ms, PairQrPayload, PendingPairing, PairingRegistry, PAIRING_PORT,
+  PAIRING_TTL_MS, SYNC_PORT,
 };
 use crate::sync::peer::{Peer, PeersStore};
 use crate::sync::server::{
   start_pairing_server, start_sync_server, PairingServerHandle, SyncServerHandle,
 };
 use crate::sync::wire::SyncReport;
+use rand::RngCore;
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
@@ -53,7 +60,10 @@ pub struct SyncManager {
   identity: Mutex<Option<Identity>>,
   server: Mutex<Option<SyncServerHandle>>,
   pairing_server: Mutex<Option<PairingServerHandle>>,
+  pairing_token: Mutex<Option<String>>,
   pending: Arc<Mutex<PairingRegistry>>,
+  discovery: Mutex<Option<DiscoveryHandle>>,
+  discovered: Arc<Mutex<HashMap<String, DiscoveredPeer>>>,
   sync_lock: AsyncMutex<()>,
 }
 
@@ -70,7 +80,10 @@ impl SyncManager {
       identity: Mutex::new(None),
       server: Mutex::new(None),
       pairing_server: Mutex::new(None),
+      pairing_token: Mutex::new(None),
       pending: Arc::new(Mutex::new(PairingRegistry::new())),
+      discovery: Mutex::new(None),
+      discovered: Arc::new(Mutex::new(HashMap::new())),
       sync_lock: AsyncMutex::new(()),
     }
   }
@@ -200,6 +213,7 @@ impl SyncManager {
   pub async fn start(&self, name: &str) -> Result<SyncLocalInfo, String> {
     let identity = self.ensure_identity(name)?;
     if self.is_running() {
+      self.ensure_discovery(&identity).await;
       return Ok(self.info_with_identity(identity));
     }
     let handle = start_sync_server(
@@ -218,8 +232,77 @@ impl SyncManager {
         *guard = Some(handle);
       }
     }
+    self.ensure_discovery(&identity).await;
     let _ = self.app.emit("sync-status", self.local_info());
     Ok(self.info_with_identity(identity))
+  }
+
+  /** Arranca (una sola vez) el anuncio/escucha UDP de descubrimiento. */
+  async fn ensure_discovery(&self, identity: &Identity) {
+    let already_running = self
+      .discovery
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .is_some();
+    if already_running {
+      return;
+    }
+    let announce = DiscoveryAnnounce::new(
+      identity.name.clone(),
+      identity.device_id.clone(),
+      identity.fingerprint(),
+      SYNC_PORT,
+      PAIRING_PORT,
+    );
+    match start_discovery(
+      announce,
+      self.app.clone(),
+      Arc::clone(&self.discovered),
+    )
+    .await
+    {
+      Ok(handle) => {
+        *self
+          .discovery
+          .lock()
+          .unwrap_or_else(|e| e.into_inner()) = Some(handle);
+      }
+      Err(err) => {
+        // La sincronización por IP sigue funcionando aunque falle el anuncio.
+        println!("[sync] descubrimiento deshabilitado: {err}");
+      }
+    }
+  }
+
+  /** Lista de dispositivos vistos en la LAN, marcando los ya emparejados. */
+  pub fn list_discovered(&self) -> Vec<DiscoveredPeer> {
+    let peers = self.peers.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list: Vec<DiscoveredPeer> = self
+      .discovered
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .values()
+      .cloned()
+      .map(|mut peer| {
+        peer.paired = peers
+          .trusted_by_device_id(&peer.device_id)
+          .is_some()
+          || peers.trusted_by_fingerprint(&peer.fingerprint).is_some();
+        peer
+      })
+      .collect();
+    list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    list
+  }
+
+  /** Dirección conocida por descubrimiento (si el dispositivo está en la LAN). */
+  fn discovered_address(&self, device_id: &str) -> Option<String> {
+    self
+      .discovered
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .get(device_id)
+      .map(|peer| peer.address.clone())
   }
 
   fn info_with_identity(&self, identity: Identity) -> SyncLocalInfo {
@@ -250,6 +333,20 @@ impl SyncManager {
     if let Some(pairing) = pairing {
       pairing.stop();
     }
+    let discovery = self
+      .discovery
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .take();
+    if let Some(discovery) = discovery {
+      discovery.stop();
+    }
+    self
+      .discovered
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .clear();
+    let _ = self.app.emit("sync-discovery", Vec::<DiscoveredPeer>::new());
     let _ = self.app.emit("sync-status", self.local_info());
   }
 
@@ -264,8 +361,14 @@ impl SyncManager {
       .collect()
   }
 
-  /** Abre la ventana de emparejamiento durante 2 minutos. */
-  pub async fn start_pairing(&self, name: &str) -> Result<(SyncLocalInfo, u64), String> {
+  fn new_pairing_token() -> String {
+    let mut bytes = [0u8; 24];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+  }
+
+  /** Abre la ventana de emparejamiento durante 2 minutos y devuelve el token del QR. */
+  pub async fn start_pairing(&self, name: &str) -> Result<(SyncLocalInfo, u64, String), String> {
     let identity = self.ensure_identity(name)?;
     let old = self
       .pairing_server
@@ -275,11 +378,21 @@ impl SyncManager {
     if let Some(old) = old {
       old.stop();
     }
+    {
+      let mut reg = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+      reg.clear();
+    }
+    let token = Self::new_pairing_token();
+    *self
+      .pairing_token
+      .lock()
+      .unwrap_or_else(|e| e.into_inner()) = Some(token.clone());
     let handle = start_pairing_server(
       identity.clone(),
       SYNC_PORT,
       Arc::clone(&self.pending),
       PAIRING_TTL_MS,
+      Some(token.clone()),
     )
     .await?;
     let expires_at = handle.expires_at;
@@ -287,7 +400,46 @@ impl SyncManager {
       .pairing_server
       .lock()
       .unwrap_or_else(|e| e.into_inner()) = Some(handle);
-    Ok((self.info_with_identity(identity), expires_at))
+    if let Some(discovery) = self
+      .discovery
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .as_ref()
+    {
+      discovery.set_pairing_active(true);
+    }
+    Ok((self.info_with_identity(identity), expires_at, token))
+  }
+
+  /** Construye el contenido del QR con la IP LAN preferida. */
+  pub fn pairing_qr(&self, info: &SyncLocalInfo, token: &str) -> Result<String, String> {
+    let identity = info
+      .identity
+      .as_ref()
+      .ok_or_else(|| "Todavía no hay identidad de dispositivo.".to_string())?;
+    let ip = preferred_lan_ipv4()
+      .map(|ip| ip.to_string())
+      .or_else(|| {
+        info
+          .addresses
+          .iter()
+          .find(|address| address.parse::<std::net::Ipv4Addr>().is_ok())
+          .cloned()
+      })
+      .ok_or_else(|| {
+        "No se encontró una IP LAN. Conectate a la misma red Wi-Fi que el otro dispositivo."
+          .to_string()
+      })?;
+    let payload = PairQrPayload {
+      v: 1,
+      app: "inventario-tienda".into(),
+      addr: format!("{ip}:{}", info.pairing_port),
+      fp: identity.fingerprint.clone(),
+      id: identity.device_id.clone(),
+      name: identity.name.clone(),
+      token: token.to_string(),
+    };
+    payload.encode()
   }
 
   pub fn stop_pairing(&self) {
@@ -299,15 +451,50 @@ impl SyncManager {
     if let Some(old) = old {
       old.stop();
     }
+    *self
+      .pairing_token
+      .lock()
+      .unwrap_or_else(|e| e.into_inner()) = None;
+    self
+      .pending
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .clear();
+    if let Some(discovery) = self
+      .discovery
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .as_ref()
+    {
+      discovery.set_pairing_active(false);
+    }
   }
 
   pub fn pending_pairing(&self) -> Option<PendingPairing> {
+    let verified = {
+      let mut reg = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+      reg.prune();
+      reg.first().filter(|pending| pending.verified)
+    };
+    if let Some(pending) = verified {
+      // El peer demostró leer el QR: no hace falta que el usuario vuelva a
+      // confirmar el SAS en este lado.
+      match self.confirm_pairing(&pending.device_id) {
+        Ok(peer) => {
+          let _ = self.app.emit("sync-pairing-completed", &peer);
+          return None;
+        }
+        Err(err) => {
+          println!("[sync] no se pudo confirmar el emparejamiento QR: {err}");
+        }
+      }
+    }
     let mut reg = self.pending.lock().unwrap_or_else(|e| e.into_inner());
     reg.prune();
     reg.first()
   }
 
-  /** Inicia el emparejamiento contra la IP del otro dispositivo. */
+  /** Inicia el emparejamiento contra la IP del otro dispositivo (SAS manual). */
   pub async fn connect_pairing(&self, name: &str, address: &str) -> Result<PendingPairing, String> {
     let identity = self.ensure_identity(name)?;
     let mut addr = validate_peer_addr(address, PAIRING_PORT)?;
@@ -316,13 +503,39 @@ impl SyncManager {
     if addr.port() == SYNC_PORT {
       addr.set_port(PAIRING_PORT);
     }
-    let pending = connect_pairing(&identity, addr, SYNC_PORT).await?;
+    let pending = connect_pairing(&identity, addr, SYNC_PORT, None).await?;
     self
       .pending
       .lock()
       .unwrap_or_else(|e| e.into_inner())
       .add(pending.clone());
     Ok(pending)
+  }
+
+  /**
+   * Empareja escaneando un QR: valida la huella del QR contra el certificado
+   * real del peer, envía el token y confirma automáticamente en este lado.
+   */
+  pub async fn connect_pairing_qr(&self, name: &str, payload: &str) -> Result<Peer, String> {
+    let qr = PairQrPayload::decode(payload)?;
+    let identity = self.ensure_identity(name)?;
+    let mut addr = validate_peer_addr(&qr.addr, PAIRING_PORT)?;
+    if addr.port() == SYNC_PORT {
+      addr.set_port(PAIRING_PORT);
+    }
+    let pending = connect_pairing(&identity, addr, SYNC_PORT, Some(&qr.token)).await?;
+    if !pending.fingerprint.eq_ignore_ascii_case(&qr.fp) || pending.device_id != qr.id {
+      return Err(
+        "El dispositivo que respondió no coincide con el QR. No se emparejó por seguridad."
+          .into(),
+      );
+    }
+    self
+      .pending
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .add(pending.clone());
+    self.confirm_pairing(&pending.device_id)
   }
 
   pub fn confirm_pairing(&self, device_id: &str) -> Result<Peer, String> {
@@ -415,18 +628,54 @@ impl SyncManager {
         .cloned()
         .ok_or_else(|| "El dispositivo no está emparejado.".to_string())?
     };
-    let address_text = address_override
-      .map(str::to_string)
-      .or_else(|| peer.address.clone())
-      .ok_or_else(|| "No hay dirección configurada para este peer.".to_string())?;
-    let addr = validate_peer_addr(&address_text, SYNC_PORT)?;
+    let mut candidates: Vec<String> = Vec::new();
+    for candidate in [
+      address_override.map(str::to_string),
+      peer.address.clone(),
+      self.discovered_address(device_id),
+    ]
+    .into_iter()
+    .flatten()
+    {
+      if !candidate.trim().is_empty() && !candidates.contains(&candidate) {
+        candidates.push(candidate);
+      }
+    }
+    if candidates.is_empty() {
+      return Err(
+        "No hay dirección configurada para este peer. Abrí Ajustes y esperá a que aparezca en la red."
+          .into(),
+      );
+    }
 
     let _guard = self.sync_lock.lock().await;
-    let report = client::sync_peer(&identity, &self.root, &peer, addr).await?;
+    let mut last_error = String::from("No se pudo conectar con el dispositivo.");
+    let mut report: Option<SyncReport> = None;
+    let mut used_address = String::new();
+    for address_text in candidates {
+      let addr = match validate_peer_addr(&address_text, SYNC_PORT) {
+        Ok(addr) => addr,
+        Err(err) => {
+          last_error = err;
+          continue;
+        }
+      };
+      match client::sync_peer(&identity, &self.root, &peer, addr).await {
+        Ok(value) => {
+          used_address = addr.to_string();
+          report = Some(value);
+          break;
+        }
+        Err(err) => {
+          last_error = err;
+        }
+      }
+    }
+    let report = report.ok_or(last_error)?;
 
     {
       let mut store = self.peers.lock().unwrap_or_else(|e| e.into_inner());
-      store.mark_seen(device_id, Some(&addr.to_string()));
+      store.mark_seen(device_id, Some(&used_address));
       store.persist(&self.peers_path)?;
     }
     let _ = self.app.emit("sync-updated", &report);
@@ -436,7 +685,11 @@ impl SyncManager {
   pub async fn sync_all(&self) -> Result<SyncBatchResult, String> {
     let peers = self.list_peers();
     if peers.is_empty() {
-      return Err("No hay dispositivos emparejados.".into());
+      // Sin peers no es un error: el auto-sync simplemente no tiene nada que hacer.
+      return Ok(SyncBatchResult {
+        reports: Vec::new(),
+        errors: Vec::new(),
+      });
     }
     let mut reports = Vec::new();
     let mut errors = Vec::new();

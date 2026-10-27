@@ -91,6 +91,71 @@ pub fn local_lan_addresses() -> Vec<String> {
   out
 }
 
+/** IPv4 de la LAN preferida para anuncios y códigos QR (prioriza Wi-Fi privada). */
+pub fn preferred_lan_ipv4() -> Option<Ipv4Addr> {
+  let interfaces = if_addrs::get_if_addrs().ok()?;
+  let mut private = Vec::new();
+  let mut link_local = Vec::new();
+  for iface in interfaces {
+    if iface.is_loopback() {
+      continue;
+    }
+    if let if_addrs::IfAddr::V4(v4) = iface.addr {
+      if v4.ip.is_private() {
+        private.push(v4.ip);
+      } else if v4.ip.is_link_local() {
+        link_local.push(v4.ip);
+      }
+    }
+  }
+  private.into_iter().next().or_else(|| link_local.into_iter().next())
+}
+
+/** Direcciones de broadcast IPv4 de cada interfaz LAN (para descubrimiento). */
+pub fn local_ipv4_broadcasts() -> Vec<Ipv4Addr> {
+  let mut out = Vec::new();
+  if let Ok(interfaces) = if_addrs::get_if_addrs() {
+    for iface in interfaces {
+      if iface.is_loopback() {
+        continue;
+      }
+      if let if_addrs::IfAddr::V4(v4) = iface.addr {
+        if v4.ip.is_loopback() {
+          continue;
+        }
+        let broadcast = v4
+          .broadcast
+          .unwrap_or_else(|| Ipv4Addr::from(u32::from(v4.ip) | !u32::from(v4.netmask)));
+        if !out.contains(&broadcast) {
+          out.push(broadcast);
+        }
+      }
+    }
+  }
+  out
+}
+
+/** IPv4 de cada interfaz LAN (se usa para unirse al grupo multicast). */
+pub fn local_ipv4_interfaces() -> Vec<Ipv4Addr> {
+  let mut out = Vec::new();
+  if let Ok(interfaces) = if_addrs::get_if_addrs() {
+    for iface in interfaces {
+      if iface.is_loopback() {
+        continue;
+      }
+      if let if_addrs::IfAddr::V4(v4) = iface.addr {
+        if v4.ip.is_loopback() {
+          continue;
+        }
+        if !out.contains(&v4.ip) {
+          out.push(v4.ip);
+        }
+      }
+    }
+  }
+  out
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

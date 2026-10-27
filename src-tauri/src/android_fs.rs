@@ -257,6 +257,76 @@ pub fn vault_write_file(parent_uri: &str, file_name: &str, bytes: &[u8]) -> Resu
 }
 
 /* ------------------------------------------------------------------ */
+/* MulticastLock para descubrimiento P2P (Android)                   */
+/* ------------------------------------------------------------------ */
+
+fn call_multicast_static(method: &str, sig: &str, with_context: bool) -> bool {
+  let ctx = ndk_context::android_context();
+  let vm = match unsafe { JavaVM::from_raw(ctx.vm().cast()) } {
+    Ok(vm) => vm,
+    Err(_) => return false,
+  };
+  let mut env = match vm.attach_current_thread() {
+    Ok(env) => env,
+    Err(_) => return false,
+  };
+  let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+  let loader = match env.call_method(
+    &context,
+    "getClassLoader",
+    "()Ljava/lang/ClassLoader;",
+    &[],
+  ) {
+    Ok(value) => match value.l() {
+      Ok(loader) => loader,
+      Err(_) => return false,
+    },
+    Err(_) => return false,
+  };
+  let class_name = match env.new_string("com.inventariotienda.app.Multicast") {
+    Ok(name) => name,
+    Err(_) => return false,
+  };
+  let class_obj = match env.call_method(
+    &loader,
+    "loadClass",
+    "(Ljava/lang/String;)Ljava/lang/Class;",
+    &[JValue::Object(&class_name)],
+  ) {
+    Ok(value) => match value.l() {
+      Ok(class) => class,
+      Err(_) => return false,
+    },
+    Err(_) => return false,
+  };
+  let class = JClass::from(class_obj);
+  let args: Vec<JValue<'_, '_>> = if with_context {
+    vec![JValue::Object(&context)]
+  } else {
+    Vec::new()
+  };
+  let result = env.call_static_method(&class, method, sig, &args);
+  if env.exception_check().unwrap_or(false) {
+    let _ = env.exception_describe();
+    let _ = env.exception_clear();
+    return false;
+  }
+  match result {
+    Ok(value) => value.z().unwrap_or(false),
+    Err(_) => false,
+  }
+}
+
+/** Adquiere el MulticastLock de Wi-Fi para poder recibir anuncios UDP. */
+pub fn acquire_multicast_lock() -> bool {
+  call_multicast_static("acquire", "(Landroid/content/Context;)Z", true)
+}
+
+pub fn release_multicast_lock() {
+  let _ = call_multicast_static("release", "()V", false);
+}
+
+/* ------------------------------------------------------------------ */
 /* Estado de batería / ahorro (Android)                              */
 /* ------------------------------------------------------------------ */
 

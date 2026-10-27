@@ -56,6 +56,10 @@ fn store_default_root(app: AppHandle) -> Result<String, String> {
 struct PairingStart {
   info: SyncLocalInfo,
   expires_at: u64,
+  /// Token de un solo uso embebido en el QR.
+  token: String,
+  /// Contenido exacto que se dibuja como QR.
+  qr_payload: String,
 }
 
 #[tauri::command]
@@ -100,12 +104,34 @@ fn sync_list_peers(state: tauri::State<'_, SyncManager>) -> Result<Vec<Peer>, St
 }
 
 #[tauri::command]
+fn sync_discovered(
+  state: tauri::State<'_, SyncManager>,
+) -> Result<Vec<sync::discovery::DiscoveredPeer>, String> {
+  Ok(state.list_discovered())
+}
+
+#[tauri::command]
 async fn sync_pair_listen_start(
   state: tauri::State<'_, SyncManager>,
   name: String,
 ) -> Result<PairingStart, String> {
-  let (info, expires_at) = state.start_pairing(&name).await?;
-  Ok(PairingStart { info, expires_at })
+  let (info, expires_at, token) = state.start_pairing(&name).await?;
+  let qr_payload = state.pairing_qr(&info, &token)?;
+  Ok(PairingStart {
+    info,
+    expires_at,
+    token,
+    qr_payload,
+  })
+}
+
+#[tauri::command]
+async fn sync_pair_qr_connect(
+  state: tauri::State<'_, SyncManager>,
+  name: String,
+  payload: String,
+) -> Result<Peer, String> {
+  state.connect_pairing_qr(&name, &payload).await
 }
 
 #[tauri::command]
@@ -212,10 +238,12 @@ pub fn run() {
       sync_start,
       sync_stop,
       sync_list_peers,
+      sync_discovered,
       sync_pair_listen_start,
       sync_pair_listen_stop,
       sync_pair_pending,
       sync_pair_connect,
+      sync_pair_qr_connect,
       sync_pair_confirm,
       sync_pair_cancel,
       sync_now,
