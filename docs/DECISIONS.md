@@ -44,11 +44,11 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - Permisos: `INTERNET`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`; **sin** `MANAGE_EXTERNAL_STORAGE`.
 - `minSdk`: por definir (matriz API 28/29, 30, 34, última).
 
-### Fase 2 — P2P cifrado LAN
-- Identidad: par de claves Ed25519 + certificado autofirmado (rcgen). Device ID = SHA-256 del cert DER.
-- Transporte: TLS 1.3 mutuo (rustls), ALPN `inventario-sync/1`, pinning de fingerprints.
-- Descubrimiento: mDNS/DNS-SD o UDP multicast propio; fallback IP:puerto manual.
-- Puerto: configurable, no 22000/21027 (Syncthing).
+### Fase 2 — P2P cifrado LAN (PARCIAL — núcleo implementado, transporte esqueleto)
+- Núcleo implementado y testeado (15 tests Rust): identidad (Ed25519 + cert autofirmado, Device ID = SHA-256 del cert, código SAS), peers emparejados, framing (prefijo de longitud, 1 MiB max), protocolo de reconciliación por dominio (resumen, diff de IDs, lotes ≤500 eventos/1 MiB, SHA-256 por lote, validación de HLC futuro).
+- Comandos Tauri: `sync_generate_identity`, `sync_list_peers`, `sync_start`, `sync_stop`.
+- UI en Ajustes → Sincronización (esqueleto M3).
+- Transporte TLS 1.3 mutuo (rustls) y descubrimiento UDP multicast: ESQUELETO no verificado. El crate `ring` (crypto de rustls) no compila para Android en este entorno (falta ensamblador pregenerado del NDK). Documentado como límite conocido.
 
 ### Fase 5 — Actualizaciones
 - Desktop: `tauri-plugin-updater`, endpoint `latest.json` en GitHub Releases.

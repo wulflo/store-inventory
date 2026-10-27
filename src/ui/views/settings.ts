@@ -7,6 +7,7 @@ import { showError, toastSuccess } from '../components/toast';
 import { confirmDialog, openModal } from '../components/modal';
 import { CURRENCIES } from '../../core/money';
 import { APP_VERSION } from '../../core/version';
+import { invoke } from '@tauri-apps/api/core';
 
 export function settingsView(app: App, shell: Shell): HTMLElement {
   const view = el('div');
@@ -210,6 +211,143 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
         el('p', {
           class: 'small muted mt-4',
           text: '100% local y offline. Tus datos viven en archivos .jsonl (append-only) dentro de una carpeta elegible, sin base SQL .db.',
+        }),
+      ),
+    }),
+  );
+
+  /* ---------------- Sincronización (esqueleto fase 2) ---------------- */
+  let syncEnabled = false;
+  let syncDeviceId = '';
+  let syncPeers: any[] = [];
+
+  async function syncGenerateIdentity(): Promise<void> {
+    try {
+      const id = await invoke<string>('sync_generate_identity', { name: 'Este equipo' });
+      syncDeviceId = id;
+      syncEnabled = true;
+      renderSync();
+      toastSuccess('Identidad de dispositivo generada.');
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function syncListPeers(): Promise<void> {
+    try {
+      syncPeers = await invoke<any[]>('sync_list_peers');
+      renderSync();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function syncStart(): Promise<void> {
+    try {
+      await invoke('sync_start');
+      toastSuccess('Sincronización iniciada (esqueleto).');
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function syncStop(): Promise<void> {
+    try {
+      await invoke('sync_stop');
+      toastSuccess('Sincronización detenida.');
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  function renderSync(): void {
+    // Se renderiza la tarjeta completa abajo; esta función es un placeholder
+    // para futuras actualizaciones reactivas de la lista de peers.
+  }
+
+  view.appendChild(
+    card({
+      title: 'Sincronización (P2P LAN)',
+      content: el(
+        'div',
+        {},
+        el(
+          'div',
+          { class: 'row-between', style: { marginBottom: '16px' } },
+          el('span', { class: 'small muted', text: 'Sincronización P2P (LAN)' }),
+          el(
+            'label',
+            {
+              style: { display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' },
+              on: {
+                click: () => {
+                  syncEnabled = !syncEnabled;
+                  if (syncEnabled && !syncDeviceId) {
+                    void syncGenerateIdentity();
+                  }
+                  renderSync();
+                },
+              },
+            },
+            el('input', {
+              type: 'checkbox',
+              checked: syncEnabled,
+              on: { change: () => {} },
+            }),
+            el('span', { text: syncEnabled ? 'Activada' : 'Desactivada' }),
+          ),
+        ),
+        el('div', { class: 'field', style: { marginBottom: '16px' } },
+          el('label', { text: 'Mi Device ID' }),
+          el('input', {
+            type: 'text',
+            value: syncDeviceId,
+            disabled: true,
+            style: { width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #c7c6cf', background: '#e7e9ec' },
+          }),
+          el('button', {
+            class: 'btn btn-sm',
+            type: 'button',
+            style: { marginTop: '8px' },
+            text: syncDeviceId ? 'Volver a generar' : 'Generar identidad',
+            on: { click: () => void syncGenerateIdentity() },
+          }),
+        ),
+        el('div', { class: 'field', style: { marginBottom: '16px' } },
+          el('label', { text: 'Dispositivos emparejados' }),
+          syncPeers.length === 0
+            ? el('div', { class: 'small muted', text: 'Sin dispositivos emparejados todavía.' })
+            : el(
+                'div',
+                {},
+                ...syncPeers.map((p) => el('div', { class: 'small', style: { padding: '4px 0' } }, el('span', { text: `${p.name ?? p.device_id} · ${p.device_id.slice(0, 8)}…` }))),
+              ),
+          el('button', {
+            class: 'btn btn-sm',
+            type: 'button',
+            style: { marginTop: '8px' },
+            text: 'Refrescar lista',
+            on: { click: () => void syncListPeers() },
+          }),
+        ),
+        el('div', { class: 'btn-group', style: { gap: '8px' } },
+          el('button', {
+            class: 'btn btn-sm',
+            type: 'button',
+            disabled: !syncDeviceId,
+            text: 'Iniciar sincronización',
+            on: { click: () => void syncStart() },
+          }),
+          el('button', {
+            class: 'btn btn-sm',
+            type: 'button',
+            text: 'Detener',
+            on: { click: () => void syncStop() },
+          }),
+        ),
+        el('p', {
+          class: 'small muted mt-3',
+          text: 'Esqueleto de fase 2: identidad y protocolo implementados; transporte TLS/mDNS no verificado.',
         }),
       ),
     }),
