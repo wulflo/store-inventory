@@ -742,6 +742,18 @@ export function topProductsByUnits(
     .slice(0, limit);
 }
 
+/** Productos menos vendidos por unidades, en un período. */
+export function bottomProductsByUnits(
+  state: AppState,
+  from: number,
+  to: number,
+  limit = 10,
+): { product?: Product; units: number; revenueCents: number }[] {
+  return [...topProductsByUnits(state, from, to, Number.MAX_SAFE_INTEGER)]
+    .sort((a, b) => a.units - b.units)
+    .slice(0, limit);
+}
+
 /* ------------------------------------------------------------------ */
 /* Movimientos                                                         */
 /* ------------------------------------------------------------------ */

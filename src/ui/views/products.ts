@@ -4,9 +4,10 @@ import type { Shell } from '../app';
 import type { App } from '../../app/App';
 import { collectionSummaries, productSummaries } from '../../projection/queries';
 import { showError, toastSuccess } from '../components/toast';
-import { deleteProduct, updateVariant, generateVariants } from '../../domain/commands';
+import { deleteProduct, updateProduct, updateVariant, generateVariants } from '../../domain/commands';
 import { confirmDialog, openModal } from '../components/modal';
 import { SIZES } from '../../core/sizes';
+import { parseMoneyToCents } from '../../core/money';
 
 export function productsView(app: App, shell: Shell): HTMLElement {
   const view = el('div');
@@ -112,6 +113,16 @@ export function productsView(app: App, shell: Shell): HTMLElement {
                 {
                   class: 'btn btn-sm btn-ghost',
                   type: 'button',
+                  title: 'Editar producto',
+                  on: { click: () => openEditProduct(app, ps.product.id, render) },
+                },
+                'Editar',
+              ),
+              el(
+                'button',
+                {
+                  class: 'btn btn-sm btn-ghost',
+                  type: 'button',
                   title: 'Variantes y stock mínimo',
                   on: { click: () => openVariants(app, ps.product.id) },
                 },
@@ -185,6 +196,117 @@ function miniStat(label: string, value: string): HTMLElement {
 }
 
 /* ------------------------------------------------------------------ */
+
+/** Edición de los datos principales del producto. */
+export function openEditProduct(app: App, productId: string, onDone?: () => void): void {
+  const product = app.state.products.get(productId);
+  if (!product) return;
+
+  const collections = [...app.state.collections.values()].filter((c) => !c.deletedAt);
+  const nameInput = el('input', { type: 'text', value: product.name });
+  const skuInput = el('input', { type: 'text', value: product.sku });
+  const typeSelect = el(
+    'select',
+    {},
+    el('option', { value: 'remera', text: 'Remera', selected: product.type === 'remera' }),
+    el('option', { value: 'buzo', text: 'Buzo', selected: product.type === 'buzo' }),
+  );
+  const collectionSelect = el(
+    'select',
+    {},
+    ...collections.map((c) =>
+      el('option', { value: c.id, text: c.name, selected: c.id === product.collectionId }),
+    ),
+  );
+  const priceInput = moneyInput(product.basePriceCents, () => {});
+  const descInput = el('textarea', { rows: '2', value: product.description ?? '' });
+  const fabricInput = moneyInput(product.costFabricCents, () => {});
+  const printInput = moneyInput(product.costPrintCents, () => {});
+  const laborInput = moneyInput(product.costLaborCents, () => {});
+  const otherInput = moneyInput(product.costOtherCents, () => {});
+
+  const modal = openModal({
+    title: 'Editar producto',
+    subtitle: product.sku,
+    wide: true,
+    body: el(
+      'div',
+      {},
+      el(
+        'div',
+        { class: 'form-row' },
+        el('div', { class: 'field' }, el('label', { text: 'Nombre' }), nameInput),
+        el('div', { class: 'field' }, el('label', { text: 'SKU' }), skuInput),
+      ),
+      el(
+        'div',
+        { class: 'form-row' },
+        el('div', { class: 'field' }, el('label', { text: 'Tipo' }), typeSelect),
+        el('div', { class: 'field' }, el('label', { text: 'Colección' }), collectionSelect),
+      ),
+      el('div', { class: 'field' }, el('label', { text: 'Precio de venta' }), priceInput),
+      el('div', { class: 'field' }, el('label', { text: 'Descripción' }), descInput),
+      el('div', { class: 'section-title mt-4', text: 'Costos por unidad' }),
+      el(
+        'div',
+        { class: 'form-row form-row-3' },
+        el('div', { class: 'field' }, el('label', { text: 'Tela' }), fabricInput),
+        el('div', { class: 'field' }, el('label', { text: 'Estampado' }), printInput),
+        el('div', { class: 'field' }, el('label', { text: 'Mano de obra' }), laborInput),
+      ),
+      el('div', { class: 'field' }, el('label', { text: 'Otros' }), otherInput),
+    ),
+    actions: [
+      el('button', { class: 'btn', type: 'button', text: 'Cancelar', on: { click: () => modal.close() } }),
+      el('button', {
+        class: 'btn btn-primary',
+        type: 'button',
+        text: 'Guardar cambios',
+        on: {
+          click: async () => {
+            try {
+              await updateProduct(app, productId, {
+                name: nameInput.value.trim(),
+                sku: skuInput.value.trim(),
+                type: typeSelect.value as 'remera' | 'buzo',
+                collectionId: collectionSelect.value,
+                description: descInput.value.trim() || undefined,
+                basePriceCents: parseMoneyInput(priceInput.value),
+                costFabricCents: parseMoneyInput(fabricInput.value),
+                costPrintCents: parseMoneyInput(printInput.value),
+                costLaborCents: parseMoneyInput(laborInput.value),
+                costOtherCents: parseMoneyInput(otherInput.value),
+              });
+              modal.close();
+              toastSuccess('Producto actualizado.');
+              onDone?.();
+            } catch (err) {
+              showError(err);
+            }
+          },
+        },
+      }),
+    ],
+  });
+}
+
+function moneyInput(initialCents: number, onChange: (cents: number) => void): HTMLInputElement {
+  const input = el('input', {
+    type: 'text',
+    inputmode: 'decimal',
+    value: initialCents ? (initialCents / 100).toFixed(2).replace('.', ',') : '',
+    placeholder: '0,00',
+    on: {
+      input: () => onChange(parseMoneyInput(input.value)),
+    },
+  });
+  return input;
+}
+
+function parseMoneyInput(value: string): number {
+  const cents = parseMoneyToCents(value);
+  return cents ?? 0;
+}
 
 /** Modal de variantes: stock mínimo, costo, precio y generación masiva. */
 export function openVariants(app: App, productId: string): void {

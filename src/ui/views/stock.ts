@@ -239,14 +239,28 @@ export function stockView(app: App, shell: Shell): HTMLElement {
             'td',
             {},
             el(
-              'button',
-              {
-                class: 'btn btn-sm',
-                type: 'button',
-                text: 'Movimiento',
-                title: last ? `Último: ${formatDateTime(last)}` : '',
-                on: { click: () => openMovement(app, row.variant!) },
-              },
+              'div',
+              { class: 'row', style: { gap: '4px' } },
+              el(
+                'button',
+                {
+                  class: 'btn btn-sm',
+                  type: 'button',
+                  text: 'Fijar',
+                  title: 'Fijar la cantidad real en stock',
+                  on: { click: () => openSetStock(app, row.variant!) },
+                },
+              ),
+              el(
+                'button',
+                {
+                  class: 'btn btn-sm btn-ghost',
+                  type: 'button',
+                  text: 'Movimiento',
+                  title: last ? `Último: ${formatDateTime(last)}` : '',
+                  on: { click: () => openMovement(app, row.variant!) },
+                },
+              ),
             ),
           ),
         ),
@@ -262,6 +276,67 @@ export function stockView(app: App, shell: Shell): HTMLElement {
 }
 
 /* ------------------------------------------------------------------ */
+
+/** Fija la cantidad real en stock generando el ajuste necesario. */
+export function openSetStock(app: App, variant: Variant): void {
+  const product = app.state.products.get(variant.productId);
+  const color = app.state.colors.get(variant.colorId);
+  const agg = app.state.stock.get(variant.id);
+  const current = agg?.totalQty ?? 0;
+
+  const qtyInput = el('input', {
+    type: 'number',
+    min: '0',
+    value: String(current),
+    inputmode: 'numeric',
+  });
+  const reasonInput = el('input', { type: 'text', placeholder: 'Motivo (ej. conteo manual)' });
+
+  const modal = openModal({
+    title: 'Fijar stock real',
+    subtitle: `${product?.name ?? ''} · ${variant.sizeCode} · ${color?.name ?? ''}`,
+    body: el(
+      'div',
+      {},
+      el('p', {
+        class: 'small muted mb-4',
+        text: `Ahora hay ${current} unidades. Ingresá la cantidad real contada y se registrará el ajuste.`,
+      }),
+      el('div', { class: 'field' }, el('label', { text: 'Cantidad real' }), qtyInput),
+      el('div', { class: 'field' }, el('label', { text: 'Motivo' }), reasonInput),
+    ),
+    actions: [
+      el('button', { class: 'btn', type: 'button', text: 'Cancelar', on: { click: () => modal.close() } }),
+      el('button', {
+        class: 'btn btn-primary',
+        type: 'button',
+        text: 'Guardar ajuste',
+        on: {
+          click: async () => {
+            const target = Math.max(0, Math.floor(Number(qtyInput.value) || 0));
+            const delta = target - current;
+            if (delta === 0) {
+              modal.close();
+              return;
+            }
+            try {
+              await addStockMovement(app, {
+                variantId: variant.id,
+                movementType: delta > 0 ? 'ajuste_pos' : 'ajuste_neg',
+                quantity: delta,
+                reason: reasonInput.value || 'Conteo manual',
+              });
+              modal.close();
+              toastSuccess(`Stock fijado en ${target}.`);
+            } catch (err) {
+              showError(err);
+            }
+          },
+        },
+      }),
+    ],
+  });
+}
 
 export function openMovement(app: App, variant: Variant): void {
   const product = app.state.products.get(variant.productId);

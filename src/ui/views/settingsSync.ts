@@ -376,7 +376,14 @@ export function settingsSyncCard(app: App): HTMLElement {
         video: { facingMode: { ideal: 'environment' } },
       });
     } catch (err) {
-      showError(err);
+      const name = err instanceof DOMException ? err.name : '';
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        showError(new Error('Permiso de cámara denegado. Habilitalo en Ajustes del sistema > Apps > Inventario Tienda > Permisos.'));
+      } else if (name === 'NotFoundError') {
+        showError(new Error('No se encontró una cámara en este dispositivo.'));
+      } else {
+        showError(err);
+      }
       return;
     }
     const video = el('video', {
@@ -697,7 +704,38 @@ export function settingsSyncCard(app: App): HTMLElement {
       el('div', { class: 'sync-or' }, el('span', { text: 'o' })),
       el(
         'div',
-        { class: 'btn-group', style: { gap: '8px', flexWrap: 'wrap' } },
+        { class: 'field' },
+        el('label', { text: 'Código / contenido del QR' }),
+        el(
+          'p',
+          {
+            class: 'small muted',
+            text: 'Pegá acá el texto del QR que muestra el otro dispositivo (también podés escanearlo).',
+          },
+        ),
+        (() => {
+          const codeInput = el('textarea', {
+            rows: '3',
+            placeholder: 'inventario-tienda://pair?d=…',
+            autocomplete: 'off',
+          });
+          return el(
+            'div',
+            { class: 'sync-inline', style: { alignItems: 'stretch' } },
+            codeInput,
+            el('button', {
+              class: 'btn btn-primary',
+              type: 'button',
+              disabled: busy,
+              text: 'Conectar',
+              on: { click: () => void connectQr(codeInput.value.trim()) },
+            }),
+          );
+        })(),
+      ),
+      el(
+        'div',
+        { class: 'btn-group', style: { gap: '8px', flexWrap: 'wrap', marginTop: '8px' } },
         el('button', {
           class: 'btn btn-sm',
           type: 'button',
@@ -709,7 +747,7 @@ export function settingsSyncCard(app: App): HTMLElement {
           class: 'btn btn-sm',
           type: 'button',
           disabled: busy,
-          text: 'Escanear QR (cámara)',
+          text: 'Escanear QR / OCR (cámara)',
           on: { click: () => void scanQrFromCamera() },
         }),
       ),

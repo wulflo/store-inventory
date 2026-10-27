@@ -5,12 +5,11 @@ import type { App } from '../../app/App';
 import { createProduct, createColor, generateVariants } from '../../domain/commands';
 import { showError, toastSuccess } from '../components/toast';
 import { openModalLazy } from '../components/modal';
-import { parseMoneyToCents } from '../../core/money';
+import { formatMoney, parseMoneyToCents } from '../../core/money';
 import { SIZES } from '../../core/sizes';
 import type { ProductType, Season } from '../../core/types';
 
 export function newProductView(app: App, shell: Shell): HTMLElement {
-  let step = 1;
   let collectionId = '';
   let name = '';
   let sku = '';
@@ -27,7 +26,7 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
   );
 
   const view = el('div');
-  const stepBox = el('div');
+  const formBox = el('div');
 
   view.appendChild(
     el(
@@ -43,112 +42,47 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
         icon('arrowLeft', 18),
         'Catálogo',
       ),
-      el('div', { class: 'row', style: { gap: '8px' } }, el('span', { class: 'small dim', text: `Paso ${step} de 3` })),
+      el('span', { class: 'small dim', text: 'Alta rápida' }),
     ),
   );
-  view.appendChild(stepBox);
+  view.appendChild(formBox);
 
   function render(): void {
-    stepBox.replaceChildren();
-    if (step === 1) renderStep1();
-    else if (step === 2) renderStep2();
-    else renderStep3();
-  }
+    const collections = [...app.state.collections.values()].filter((c) => !c.deletedAt);
+    const colors = [...app.state.colors.values()].filter((c) => !c.deletedAt);
+    if (!collectionId && collections.length > 0) collectionId = collections[0].id;
 
-  /* ---------------- Paso 1: colección ---------------- */
-  function renderStep1(): void {
-    const select = el(
+    const collectionSelect = el(
       'select',
       {
         on: {
           change: () => {
-            collectionId = select.value;
+            collectionId = collectionSelect.value;
           },
         },
       },
       el('option', { value: '', text: 'Elegí una colección…' }),
-      ...[...app.state.collections.values()]
-        .filter((c) => !c.deletedAt)
-        .map((c) => el('option', { value: c.id, text: c.name })),
-    );
-
-    const hasCollections = [...app.state.collections.values()].some((c) => !c.deletedAt);
-
-    stepBox.appendChild(
-      card({
-        title: '1 · Colección',
-        content: el(
-          'div',
-          {},
-          hasCollections
-            ? el('div', { class: 'field' }, el('label', { text: 'Colección' }), select)
-            : emptyCollectionNotice(),
-          el(
-            'div',
-            { class: 'btn-group mt-4' },
-            el('button', {
-              class: 'btn btn-primary',
-              type: 'button',
-              text: 'Continuar',
-              on: {
-                click: () => {
-                  if (!collectionId) {
-                    showError(new Error('Elegí una colección.'));
-                    return;
-                  }
-                  step = 2;
-                  render();
-                },
-              },
-            }),
-          ),
-        ),
-      }),
-    );
-  }
-
-  function emptyCollectionNotice(): HTMLElement {
-    return el(
-      'div',
-      {},
-      el('p', {
-        class: 'muted mb-4',
-        text: 'Primero necesitás una colección. Creala acá y seguí.',
-      }),
-      el(
-        'button',
-        {
-          class: 'btn btn-primary',
-          type: 'button',
-          text: 'Crear colección',
-          on: { click: () => openCreateCollection(app, () => render()) },
-        },
+      ...collections.map((c) =>
+        el('option', {
+          value: c.id,
+          text: c.name,
+          selected: c.id === collectionId,
+        }),
       ),
     );
-  }
 
-  /* ---------------- Paso 2: datos ---------------- */
-  function renderStep2(): void {
     const nameInput = el('input', {
       type: 'text',
       placeholder: 'Ej: Remera Básica Algodón',
       value: name,
-      on: {
-        input: () => {
-          name = nameInput.value;
-        },
-      },
+      on: { input: () => { name = nameInput.value; } },
     });
 
     const skuInput = el('input', {
       type: 'text',
       placeholder: 'Ej: REM-001',
       value: sku,
-      on: {
-        input: () => {
-          sku = skuInput.value;
-        },
-      },
+      on: { input: () => { sku = skuInput.value; } },
     });
 
     const typeSelect = el(
@@ -167,11 +101,8 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
     const descInput = el('textarea', {
       rows: '2',
       placeholder: 'Descripción (opcional)',
-      on: {
-        input: () => {
-          description = descInput.value;
-        },
-      },
+      value: description,
+      on: { input: () => { description = descInput.value; } },
     });
 
     const priceInput = moneyInput(basePriceCents, (v) => (basePriceCents = v));
@@ -187,18 +118,97 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
       const pct = basePriceCents > 0 ? (margin / basePriceCents) * 100 : 0;
       marginBox.textContent =
         basePriceCents > 0
-          ? `Costo ${(cost / 100).toFixed(2)} · Margen ${(margin / 100).toFixed(2)} (${pct.toFixed(0)}%)`
+          ? `Costo ${formatMoney(cost)} · Margen ${formatMoney(margin)} (${pct.toFixed(0)}%)`
           : 'Costo 0 · Margen 0';
     };
-    priceInput.addEventListener('input', updateMargin);
+    for (const input of [priceInput, fabricInput, printInput, laborInput, otherInput]) {
+      input.addEventListener('input', updateMargin);
+    }
     updateMargin();
 
-    stepBox.appendChild(
+    const totalBox = el('div', { class: 'small muted mt-3' });
+    const updateTotal = () => {
+      totalBox.textContent = `${selectedSizes.size} talle(s) × ${selectedColors.size} color(es) = ${
+        selectedSizes.size * selectedColors.size
+      } variante(s).`;
+    };
+
+    const sizeButtons = SIZES.map((s) => {
+      const btn = el(
+        'button',
+        {
+          class: `chip${selectedSizes.has(s.code) ? ' active' : ''}`,
+          type: 'button',
+          text: s.label,
+          'aria-pressed': String(selectedSizes.has(s.code)),
+          on: {
+            click: () => {
+              if (selectedSizes.has(s.code)) selectedSizes.delete(s.code);
+              else selectedSizes.add(s.code);
+              btn.classList.toggle('active');
+              btn.setAttribute('aria-pressed', String(selectedSizes.has(s.code)));
+              updateTotal();
+            },
+          },
+        },
+      );
+      return btn;
+    });
+
+    const colorButtons = colors.map((c) => {
+      const btn = el(
+        'button',
+        {
+          class: `chip${selectedColors.has(c.id) ? ' active' : ''}`,
+          type: 'button',
+          'aria-pressed': String(selectedColors.has(c.id)),
+          on: {
+            click: () => {
+              if (selectedColors.has(c.id)) selectedColors.delete(c.id);
+              else selectedColors.add(c.id);
+              btn.classList.toggle('active');
+              btn.setAttribute('aria-pressed', String(selectedColors.has(c.id)));
+              updateTotal();
+            },
+          },
+        },
+        el('span', { class: 'color-dot', style: { background: c.hex } }),
+        el('span', { text: c.name }),
+      );
+      return btn;
+    });
+    updateTotal();
+
+    formBox.replaceChildren(
       card({
-        title: '2 · Datos del producto',
+        title: 'Nuevo producto',
+        subtitle: 'Un solo formulario: datos, precios, talles y colores.',
         content: el(
           'div',
           {},
+          el(
+            'div',
+            { class: 'form-row' },
+            el(
+              'div',
+              { class: 'field' },
+              el(
+                'label',
+                { class: 'row-between' },
+                el('span', { text: 'Colección' }),
+                el('button', {
+                  class: 'btn btn-sm btn-ghost',
+                  type: 'button',
+                  text: '+ Nueva',
+                  on: {
+                    click: () => openCreateCollection(app, () => render()),
+                  },
+                }),
+              ),
+              collectionSelect,
+            ),
+            el('div', { class: 'field' }, el('label', { text: 'Tipo' }), typeSelect),
+          ),
           el(
             'div',
             { class: 'form-row' },
@@ -208,7 +218,6 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
           el(
             'div',
             { class: 'form-row' },
-            el('div', { class: 'field' }, el('label', { text: 'Tipo' }), typeSelect),
             el(
               'div',
               { class: 'field' },
@@ -216,146 +225,51 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
               priceInput,
               marginBox,
             ),
+            el('div', { class: 'field' }, el('label', { text: 'Descripción' }), descInput),
           ),
-          el('div', { class: 'field' }, el('label', { text: 'Descripción' }), descInput),
-          el('div', { class: 'section-title mt-4', text: 'Costos (por unidad)' }),
+          el(
+            'details',
+            { class: 'aero-details mt-3' },
+            el('summary', { text: 'Costos por unidad (opcional)' }),
+            el(
+              'div',
+              { class: 'form-row form-row-3 mt-3' },
+              el('div', { class: 'field' }, el('label', { text: 'Tela' }), fabricInput),
+              el('div', { class: 'field' }, el('label', { text: 'Estampado' }), printInput),
+              el('div', { class: 'field' }, el('label', { text: 'Mano de obra' }), laborInput),
+            ),
+            el('div', { class: 'field' }, el('label', { text: 'Otros' }), otherInput),
+          ),
           el(
             'div',
-            { class: 'form-row form-row-3' },
-            el('div', { class: 'field' }, el('label', { text: 'Tela' }), fabricInput),
-            el('div', { class: 'field' }, el('label', { text: 'Estampado' }), printInput),
-            el('div', { class: 'field' }, el('label', { text: 'Mano de obra' }), laborInput),
+            { class: 'row-between mt-4' },
+            el('div', { class: 'section-title', style: { margin: '0' }, text: 'Talles' }),
+            el('span', { class: 'xsmall dim', text: 'Todos activos por defecto' }),
           ),
-          el('div', { class: 'field' }, el('label', { text: 'Otros' }), otherInput),
+          el('div', { class: 'chip-row' }, ...sizeButtons),
           el(
             'div',
-            { class: 'btn-group mt-4' },
-            el('button', {
-              class: 'btn',
-              type: 'button',
-              text: 'Atrás',
-              on: {
-                click: () => {
-                  step = 1;
-                  render();
-                },
-              },
-            }),
-            el('button', {
-              class: 'btn btn-primary',
-              type: 'button',
-              text: 'Continuar',
-              on: {
-                click: () => {
-                  if (!name.trim()) {
-                    showError(new Error('Poné un nombre.'));
-                    return;
-                  }
-                  if (!sku.trim()) {
-                    showError(new Error('Poné un SKU.'));
-                    return;
-                  }
-                  step = 3;
-                  render();
-                },
-              },
-            }),
-          ),
-        ),
-      }),
-    );
-  }
-
-  /* ---------------- Paso 3: variantes ---------------- */
-  function renderStep3(): void {
-    const sizeBoxes = SIZES.map((s) =>
-      el(
-        'label',
-        { class: 'checkbox' },
-        el('input', {
-          type: 'checkbox',
-          checked: selectedSizes.has(s.code),
-          on: {
-            change: (e: Event) => {
-              const checked = (e.target as HTMLInputElement).checked;
-              if (checked) selectedSizes.add(s.code);
-              else selectedSizes.delete(s.code);
-            },
-          },
-        }),
-        el('span', { text: s.label }),
-      ),
-    );
-
-    const allColors = [...app.state.colors.values()].filter((c) => !c.deletedAt);
-    const colorBoxes = allColors.map((c) =>
-      el(
-        'label',
-        { class: 'checkbox' },
-        el('input', {
-          type: 'checkbox',
-          checked: selectedColors.has(c.id),
-          on: {
-            change: (e: Event) => {
-              const checked = (e.target as HTMLInputElement).checked;
-              if (checked) selectedColors.add(c.id);
-              else selectedColors.delete(c.id);
-            },
-          },
-        }),
-        el('span', { class: 'color-dot', style: { background: c.hex } }),
-        el('span', { text: c.name }),
-      ),
-    );
-
-    const total = selectedSizes.size * selectedColors.size;
-
-    stepBox.appendChild(
-      card({
-        title: '3 · Variantes',
-        subtitle: 'Se genera una variante por cada talle × color.',
-        content: el(
-          'div',
-          {},
-          el('div', { class: 'section-title', text: 'Talles' }),
-          el('div', { class: 'row wrap', style: { gap: '14px' } }, ...sizeBoxes),
-          el(
-            'div',
-            { class: 'row-between mt-4 mb-3' },
+            { class: 'row-between mt-4' },
             el('div', { class: 'section-title', style: { margin: '0' }, text: 'Colores' }),
-            allColors.length === 0
-              ? el(
-                  'button',
-                  {
-                    class: 'btn btn-sm',
-                    type: 'button',
-                    text: '+ Nuevo color',
-                    on: { click: () => openCreateColor(app, () => render()) },
-                  },
-                )
-              : null,
+            el('button', {
+              class: 'btn btn-sm btn-ghost',
+              type: 'button',
+              text: '+ Nuevo color',
+              on: { click: () => openCreateColor(app, () => render()) },
+            }),
           ),
-          allColors.length === 0
-            ? el('p', { class: 'muted', text: 'Necesitás al menos un color.' })
-            : el('div', { class: 'row wrap', style: { gap: '14px' } }, ...colorBoxes),
-          el(
-            'div',
-            { class: 'mt-4 small muted' },
-            `Se crearán ${total} variante(s).`,
-          ),
+          colors.length === 0
+            ? el('p', { class: 'muted', text: 'Necesitás al menos un color. Creá uno con “+ Nuevo color”.' })
+            : el('div', { class: 'chip-row' }, ...colorButtons),
+          totalBox,
           el(
             'div',
             { class: 'btn-group mt-4' },
             el('button', {
               class: 'btn',
               type: 'button',
-              text: 'Atrás',
-              on: {
-                click: () => {
-                  step = 2;
-                  render();
-                },
-              },
+              text: 'Cancelar',
+              on: { click: () => shell.router.navigate('/productos') },
             }),
             el('button', {
               class: 'btn btn-primary',
@@ -370,6 +284,18 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
   }
 
   async function save(): Promise<void> {
+    if (!collectionId) {
+      showError(new Error('Elegí una colección.'));
+      return;
+    }
+    if (!name.trim()) {
+      showError(new Error('Poné un nombre.'));
+      return;
+    }
+    if (!sku.trim()) {
+      showError(new Error('Poné un SKU.'));
+      return;
+    }
     try {
       const { id } = await createProduct(app, {
         collectionId,
@@ -431,7 +357,7 @@ export function openCreateCollection(app: App, onCreated: () => void): void {
   );
   const yearInput = el('input', { type: 'number', value: String(new Date().getFullYear()) });
 
-  const modal = openModalLazy({
+  openModalLazy({
     title: 'Nueva colección',
     body: el(
       'div',

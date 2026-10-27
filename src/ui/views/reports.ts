@@ -3,6 +3,7 @@ import { card, emptyState, money, meterRow } from './common';
 import type { Shell } from '../app';
 import type { App } from '../../app/App';
 import {
+  bottomProductsByUnits,
   collectionSummaries,
   expenseSummary,
   periodReport,
@@ -131,6 +132,7 @@ export function reportsView(app: App, shell: Shell): HTMLElement {
     const collections = collectionSummaries(app.state);
     const products = productSummaries(app.state);
     const top = topProductsByUnits(app.state, from, to, 10);
+    const bottom = bottomProductsByUnits(app.state, from, to, 10);
     const expenses = expenseSummary(app.state, from, to);
 
     /* ---------------- Resumen ---------------- */
@@ -252,6 +254,71 @@ export function reportsView(app: App, shell: Shell): HTMLElement {
                   table.appendChild(tbody);
                   return table;
                 })(),
+              ),
+      }),
+    );
+
+    /* ---------------- Menos vendidos ---------------- */
+    container.appendChild(
+      card({
+        title: 'Productos menos vendidos',
+        count: bottom.length,
+        content:
+          bottom.length === 0
+            ? emptyState({ icon: 'products', title: 'Sin ventas en el período' })
+            : el(
+                'div',
+                {},
+                ...bottom.map((t) => {
+                  const max = Math.max(1, ...top.map((x) => x.units), ...bottom.map((x) => x.units));
+                  return meterRow({
+                    label: t.product?.name ?? '—',
+                    value: `${t.units} u. · ${money(t.revenueCents)}`,
+                    percent: (t.units / max) * 100,
+                    variant: t.units === 0 ? 'danger' : 'warning',
+                  });
+                }),
+              ),
+      }),
+    );
+
+    /* ---------------- Gráfico detallado ---------------- */
+    container.appendChild(
+      card({
+        title: 'Ranking visual de ventas',
+        subtitle: 'Unidades vendidas por producto en el período',
+        content:
+          top.length === 0
+            ? emptyState({ icon: 'reports', title: 'Sin ventas para graficar' })
+            : el(
+                'div',
+                {},
+                ...top.map((t, index) =>
+                  el(
+                    'div',
+                    { class: 'rank-row' },
+                    el('div', { class: 'rank-index', text: String(index + 1) }),
+                    el(
+                      'div',
+                      { class: 'rank-main' },
+                      el(
+                        'div',
+                        { class: 'row-between' },
+                        el('span', { class: 'small strong', text: t.product?.name ?? '—' }),
+                        el('span', { class: 'xsmall dim', text: `${t.units} u.` }),
+                      ),
+                      el(
+                        'div',
+                        { class: 'rank-bar' },
+                        el('span', {
+                          style: {
+                            width: `${(t.units / Math.max(1, top[0].units)) * 100}%`,
+                          },
+                        }),
+                      ),
+                    ),
+                  ),
+                ),
               ),
       }),
     );
