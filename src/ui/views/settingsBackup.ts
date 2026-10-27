@@ -195,7 +195,16 @@ export function settingsBackupView(root: HTMLElement, store: TauriEventStore): v
       const root = store.getRoot();
       if (!root) return toast('Sin carpeta de datos', { kind: 'error' });
       const res: any = await invoke('backup_pull_from_vault', { root });
-      toast(`Restaurados ${res.added_lines} eventos nuevos de ${res.scanned_devices} dispositivo(s)`, { kind: 'success' });
+      const skipped = Number(res.skipped_incompatible ?? 0);
+      const base = `Restaurados ${res.added_lines} eventos nuevos de ${res.scanned_devices} dispositivo(s)`;
+      if (skipped > 0) {
+        toast(
+          `${base}. ${skipped} evento(s) se omitieron por estar cifrados con otra clave o dañados.`,
+          { kind: 'warning', duration: 9000 },
+        );
+      } else {
+        toast(base, { kind: 'success' });
+      }
       window.location.reload();
     } catch (e: any) {
       toast(e?.message || String(e), { kind: 'error' });

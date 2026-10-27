@@ -2,6 +2,7 @@
 
 mod crypto;
 mod event_store;
+mod keys;
 mod sync;
 mod updater;
 #[cfg(target_os = "android")]
@@ -186,8 +187,7 @@ pub fn run() {
   let mut builder = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
-    .plugin(tauri_plugin_opener::init())
-    .manage(crypto::CryptoState::new());
+    .plugin(tauri_plugin_opener::init());
 
   #[cfg(not(target_os = "android"))]
   {
@@ -232,9 +232,16 @@ pub fn run() {
       sync_auto_get,
       sync_auto_set,
       battery_status,
+      crypto::crypto_boot_state,
+      crypto::crypto_enable,
       crypto::crypto_unlock,
       crypto::crypto_lock,
       crypto::crypto_status,
+      crypto::crypto_change_password,
+      crypto::crypto_rotate,
+      crypto::crypto_keyring_json,
+      crypto::crypto_import_keyring,
+      crypto::crypto_adopt_keyring,
       crypto::crypto_encrypt_text,
       crypto::crypto_decrypt_text,
       crypto::crypto_read_events,

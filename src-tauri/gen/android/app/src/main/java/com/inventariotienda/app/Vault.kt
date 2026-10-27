@@ -125,6 +125,3 @@ object Vault {
         }
     }
 }
-KOTLIN
-echo "---"
-wc -l /home/alonso/Documentos/Repositorios/inventario-tienda/src-tauri/gen/android/app/src/main/java/com/inventariotienda/app/Vault.kt

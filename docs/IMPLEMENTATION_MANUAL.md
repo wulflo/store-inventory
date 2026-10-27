@@ -451,23 +451,62 @@ Functions:
 
 ---
 
-## 10. Payload Encryption at Rest (opt-in)
+## 10. Payload Encryption at Rest
 
-Per-event encryption lets the user protect the **content** of the events on
-disk while keeping the metadata in plaintext, so ordering, deduplication and
-sync keep working without the master password.
+Per-event encryption protects the **content** of the events on disk while
+keeping the metadata in plaintext, so ordering, deduplication and sync keep
+working without the master password.
 
-### 10.1 Design
+Encryption is **opt-in** from *Ajustes → Cifrado de datos*. Once enabled it is
+one-way: there is no "disable encryption" command. To go back to plaintext you
+must restore a backup made before enabling.
+
+### 10.1 Envelope model (why the password is not the data key)
+
+The password does **not** encrypt the events directly. The design is envelope
+encryption:
+
+1. A random 32-byte **DEK** (data encryption key) encrypts every event
+   `payload` with XChaCha20-Poly1305.
+2. The DEK is stored in `keys/keyring.json` **wrapped** by two independent
+   keys derived with Argon2id:
+   - one from the **master password**,
+   - one from a **recovery code** (Crockford Base32, 20 random bytes → 32
+     characters shown as 8 groups of 4).
+
+Changing the password only re-wraps the 32-byte DEK: the events are **not**
+re-encrypted. Rotating the key (revoking a device) creates a new random DEK
+and re-encrypts everything.
 
 | Layer | Choice |
 |---|---|
-| Key derivation | Argon2id (32-byte key) from the master password |
-| Cipher | XChaCha20-Poly1305 (24-byte random nonce per event) |
-| Encoding | Base64 (standard alphabet) for ciphertext and nonce |
-| Key storage | `CryptoState` in `tauri::State`, RAM only; wiped on lock/exit |
-| Encrypted field | `payload` only |
+| DEK | 32 random bytes (`rand`) |
+| KEK | Argon2id (64 MiB, t=3, p=1, random 16-byte salt per keyring) |
+| Cipher | XChaCha20-Poly1305, 24-byte random nonce per payload |
+| AAD | `inventario-event-v2\|{id}\|{type}` (binds ciphertext to its event) |
+| `kid` | first 8 bytes of SHA-256(DEK), Base64 → 11 chars |
+| Encoding | Base64 URL-safe (no padding) for keyring fields; standard Base64 for payloads |
+| Key storage | RAM only, per data root (`Mutex<BTreeMap<root, KeyMaterial>>`) |
 
-An encrypted event on disk looks like:
+`keys/keyring.json` (permissions `0600` on Unix, atomic `tmp` + rename):
+
+```json
+{
+  "version": 1,
+  "kid": "H1-UD2qSeKs",
+  "kdf": { "alg": "argon2id", "m_cost": 65536, "t_cost": 3, "p_cost": 1, "salt": "..." },
+  "wraps": [
+    { "kind": "password", "nonce": "...", "data": "...", "created_at": 1793124748128 },
+    { "kind": "recovery", "nonce": "...", "data": "...", "created_at": 1793124751127 }
+  ]
+}
+```
+
+The keyring does **not** contain the password, the recovery code or the DEK in
+plaintext. Losing both the password and the recovery code makes the data
+unrecoverable; there is no backdoor.
+
+An encrypted event on disk:
 
 ```json
 {
@@ -475,66 +514,149 @@ An encrypted event on disk looks like:
   "type": "Order.Created",
   "payload": {
     "_encrypted": true,
+    "v": 2,
     "alg": "XChaCha20-Poly1305",
+    "kid": "H1-UD2qSeKs",
     "data": "base64(ciphertext)",
     "nonce": "base64(24 bytes)"
   },
-  "metadata": { "hlc": 1793122609026000, "device_id": "...", "timestamp": 1793122609026, "version": 1 }
+  "metadata": { "hlc": 1793122609026000, "deviceId": "...", "timestamp": 1793122609026, "version": 1 }
 }
 ```
 
-### 10.2 Dependencies
+Because the AAD includes `id` and `type`, moving a ciphertext to another event
+fails authentication (the reader marks it with `_error` instead of showing
+wrong data).
 
-```toml
-argon2 = "0.5"
-chacha20poly1305 = "0.10"
-base64 = "0.22"   # already present
-rand = "0.8"      # already present
-```
+### 10.2 Multi-device coherence (important)
 
-### 10.3 Rust API (`src-tauri/src/crypto.rs`)
+Each keyring has a **random salt and a random DEK**, so the same password typed
+on two devices does **not** produce the same key. Devices that share data must
+share the **keyring**:
+
+- New device without encryption: *Ajustes → Cifrado → Importar llavero*, pick
+  the `keyring.json` exported from the other device, then enter the same
+  password (or recovery code). This imports the DEK and leaves the device
+  unlocked. If the device already has plaintext events (for example, files
+  copied by hand), they are backed up and encrypted with the imported key.
+- Device that already had encryption and must follow a **rotation**: *Adoptar
+  llavero*. It decrypts local events with the old key, saves the new keyring
+  and re-encrypts them with the new DEK. Events that already arrived with the
+  new `kid` are left intact.
+- **Exportar llavero** shows the JSON and offers *Copiar* / *Descargar*.
+  Import uses an HTML file input (`file.text()`), which also works on Android
+  where content URIs are not real paths.
+
+Sync rejects events whose `kid` differs from the local one instead of storing
+unreadable data. The error tells the user to import/adopt the keyring.
+
+Daily backups include `keyring.json`, so restoring a backup on another device
+is self-sufficient: copy the events and the backup's `keyring.json` into
+`keys/keyring.json` (or use *Importar llavero*), then enter the password. The
+keyring is wrapped, not encrypted with a separate key; treat it as sensitive.
+Backups made **before** enabling encryption remain plaintext; delete them if
+that matters.
+
+### 10.3 Migration, rotation and safety
+
+All key-changing operations back up the data first and verify it afterwards:
+
+1. Derive the keys (Argon2id).
+2. Copy every `events/*.jsonl` to
+   `backups/pre-encryption-<timestamp>/events/`.
+3. **Enable**: save `keys/keyring.json` before touching the data, so an
+   interruption never leaves encrypted files without their key.
+   **Rotate/adopt**: write the new keyring to `keys/keyring.next.json`
+   (`stage`); the active keyring is still the old one.
+4. Take `EVENTS_WRITE_LOCK` (no concurrent appends) and re-encrypt each line
+   into `*.jsonl.tmp` (fsync) with an atomic rename.
+5. Enable: if migration fails, restore the events from the backup and remove
+   the keyring (back to plaintext). Rotate/adopt: discard the staged keyring,
+   restore the events from the backup and keep the old key active. If the
+   restore itself fails, the error says so and points to the backup (and to
+   `keyring.next.json` if it holds the only copy of the new key).
+6. On success, enable keeps the already-saved keyring; rotate/adopt activate
+   the staged one with an atomic rename (`keyring.next.json` →
+   `keyring.json`) and only then put the new key in RAM.
+7. Verify that **every** line decrypts with the new key; a mismatch aborts with
+   the backup path.
+
+Other error paths:
+
+- `ENC_LOCKED:` is returned by store reads/writes and by sync when a keyring
+  exists but the key is not in RAM. The frontend shows the unlock screen before
+  `App.init()`, so this normally only happens if the key is cleared mid-session.
+- Enabling is blocked if a keyring already exists.
+- Importing a keyring is blocked if the device already has one (use *Adoptar*).
+- Vault merge requires unlock; it encrypts incoming plaintext, skips events
+  with a foreign `kid`, deduplicates by `id` (not by full line) and reports
+  `skipped_incompatible`.
+
+### 10.4 Rust API
+
+`src-tauri/src/keys.rs`:
 
 | Item | Purpose |
 |---|---|
-| `CryptoState` | `Mutex<Option<[u8; 32]>>` managed by Tauri |
-| `derive_key(password)` | Argon2id → 32-byte key |
-| `encrypt_payload(value, key)` | → `(ciphertext_b64, nonce_b64)` |
-| `decrypt_payload(ct, nonce, key)` | → original JSON value |
-| `encrypt_event_line(line, key)` | Encrypts only `payload`, keeps metadata |
-| `decrypt_event_line(line, key)` | Decrypts `payload`, or marks `_error` if the key is wrong |
-| `append_event_encrypted(...)` | Encrypt + append through `event_store::store_append` |
-| `read_events_decrypted(...)` | Read through `event_store::store_read` + decrypt |
+| `KdfParams` | Argon2id params + random salt; `derive(secret)` → 32-byte KEK |
+| `Keyring` / `Wrap` | Versioned on-disk format with `kid` and wrapped DEK |
+| `create(password, kdf)` | New DEK + password/recovery wraps + recovery code |
+| `unlock(root, secret)` | Load keyring and unwrap with password or recovery code |
+| `change_password(root, current, new)` | Re-wrap the same DEK (no re-encryption) |
+| `save` / `load` / `parse` | Atomic 0600 save; strict parse/version/KDF bounds |
+| `stage` / `commit_staged` / `discard_staged` | Prepare, activate or discard `keyring.next.json` during rotation/adoption |
 
-Tauri commands (registered in `lib.rs`):
+`src-tauri/src/crypto.rs`:
+
+| Item | Purpose |
+|---|---|
+| `resolve_key(root)` | `None` (plaintext mode) / `Some(KeyMaterial)` / `ENC_LOCKED:` |
+| `encrypt_event_line` / `decrypt_event_line` | Transform only `payload`, keep metadata; legacy 0.1.x fallback |
+| `encrypt_event_value` / `ensure_compatible_payload` | Sync/vault paths; idempotent, rejects foreign `kid` |
+| `migrate_files` / `verify_files` | Atomic re-encryption + full verification |
+| `current_key` / `set_current` / `clear_current` | Per-root in-memory map (test isolation, multi-root safety) |
+
+Tauri commands:
 
 | Command | Flow |
 |---|---|
-| `crypto_unlock(password)` | Derive key and keep it in RAM |
-| `crypto_lock()` | Wipe the key from RAM |
-| `crypto_status()` | `true` if unlocked |
-| `crypto_encrypt_text(plaintext)` / `crypto_decrypt_text(encrypted)` | Diagnostics |
-| `crypto_append_event(root, domain, event_json)` | **Write flow**: encrypt payload + append to JSONL |
-| `crypto_read_events(root, domain)` | **Read flow**: read JSONL + return plaintext events |
+| `crypto_boot_state(root)` | `{ enabled, unlocked, kid }` for the boot gate |
+| `crypto_enable(root, password)` | Create keyring, backup, migrate, verify → recovery code |
+| `crypto_unlock(root, secret)` | Password **or** recovery code → key in RAM |
+| `crypto_lock()` | Wipe all keys from RAM |
+| `crypto_status()` | `true` if any key is unlocked |
+| `crypto_change_password(root, currentSecret, newPassword)` | Re-wrap only |
+| `crypto_rotate(root, currentSecret, newPassword)` | New DEK + full re-encryption → new recovery code |
+| `crypto_keyring_json(root)` | Export the wrapped keyring |
+| `crypto_import_keyring(root, keyringJson, secret)` | First device setup from another device; encrypts existing plaintext events |
+| `crypto_adopt_keyring(root, keyringJson, currentSecret, newSecret)` | Follow a rotation |
+| `crypto_encrypt_text` / `crypto_decrypt_text` | Diagnostics (require a root) |
+| `crypto_append_event` / `crypto_read_events` | Diagnostic flows |
 
-### 10.4 Error handling
+The normal store is transparent: `event_store::store_append` encrypts and
+`store_read` decrypts when a keyring exists. `sync::store::append_missing`
+encrypts incoming plaintext, validates `kid` and fails with `ENC_LOCKED:` when
+locked.
 
-- Empty password → `La contraseña no puede estar vacía.`
-- Command used while locked → `Llave no inicializada. Desbloqueá el cifrado...`
-- Wrong password / tampered ciphertext → authentication failure; in the read
-  flow the event keeps its metadata and its payload is returned with
-  `_error`, so the rest of the database stays usable and the UI can explain it.
-- Malformed Base64 / nonce length ≠ 24 → explicit error.
-- Plaintext events are read unchanged (migration is incremental).
+### 10.5 Frontend
 
-### 10.5 Frontend (Settings → *Cifrado de eventos*)
+- `src/ui/views/unlock.ts`: full-screen unlock before `app.init()`; supports
+  password or recovery-code modes; errors are shown inline.
+- `src/ui/views/settingsCrypto.ts`: enable (password + confirmation + warning),
+  one-time recovery-code modal (copy/download), lock (reload → unlock screen),
+  change password, rotate (new recovery code), export keyring, import keyring,
+  adopt keyring.
+- `src/ui/views/settingsBackup.ts`: warns when vault merge skipped incompatible
+  events.
+- `src/store/TauriEventStore.ts`: deduplicates by event `id` after merges.
 
-`src/ui/views/settingsCrypto.ts` adds a card with: lock status, master-password
-input, *Desbloquear* / *Bloquear* buttons and a *Probar cifrado/descifrado*
-button. Decrypted values never persist; the password is not stored anywhere.
+Limitations: losing password **and** recovery code is unrecoverable; backups
+made before enabling are plaintext; changing the password does not revoke an
+attacker who already copied the old keyring + password (use rotation for that);
+rotation re-encrypts the live data but **does not delete old backups or vault
+copies** made with the previous key, so remove those separately if they matter;
+the in-memory key is not protected against a compromised OS or memory dump.
 
-> Encryption is opt-in: the normal store keeps writing plaintext unless the
-> encrypted write command is used. The commands are ready to be wired to the
-> store as a next step (see §15).
 
 ---
 
@@ -561,12 +683,14 @@ button. Decrypted values never persist; the password is not stored anywhere.
 | HLC validation | ✅ | Future events rejected (> 24h tolerance) |
 | Frame/batch limits | ✅ | 1 MiB frame, 500 events/512 KiB batch |
 | No Internet connections | ✅ | Fallback UDP to 8.8.8.8 removed |
-| Payload encryption at rest | ✅ (opt-in) | Argon2id + XChaCha20-Poly1305, key in RAM |
+| Payload encryption at rest | ✅ (opt-in) | Random DEK + Argon2id-wrapped password/recovery keys, XChaCha20-Poly1305, AAD `id\|type` |
 
 ### Known limitations
 - `0.0.0.0` bind (necessary for multi-interface LAN, filtered by IP)
 - Encryption at rest is opt-in and only covers `payload`; metadata stays readable
-- Fixed Argon2 salt (`inventario-tienda-v1-salt`)
+- Recovery depends on sharing `keyring.json` between devices (the same password alone is not enough)
+- Changing the password does not revoke an attacker who already has the old keyring + password; use key rotation
+- Backups created before enabling encryption stay plaintext until deleted
 - No rate limiting on handshake/pairing (only sync connections)
 
 ---
@@ -747,7 +871,10 @@ cd src-tauri && cargo test
 - Sync server (full mTLS exchange)
 - Updater (semver, base64 signature)
 - Backup (SAF URI, vault path, accessibility)
-- Crypto (Argon2 derivation, XChaCha20 roundtrip, wrong key, JSONL write/read at rest)
+- Keys (keyring create/unlock, recovery code, password change, rotation)
+- Crypto (envelope encryption, AAD binding, migration/verify, per-root lock, legacy fallback)
+- Sync store (incoming plaintext encryption, foreign-kid rejection, locked writes)
+- Payload encryption migration (real-data copy audit, ignored by default)
 
 ### 14.2 Frontend tests
 
@@ -804,7 +931,7 @@ npm run typecheck  # tsc --noEmit
 | Sync pairing (SAS) | `src-tauri/src/sync/pairing.rs` |
 | Sync net (LAN) | `src-tauri/src/sync/net.rs` |
 | Backup system | `src-tauri/src/backup.rs` |
-| Payload encryption | `src-tauri/src/crypto.rs` |
+| Payload encryption | `src-tauri/src/crypto.rs`, `src-tauri/src/keys.rs` |
 | DOM helper (`el`) | `src/ui/dom.ts` |
 | Android FS (JNI) | `src-tauri/src/android_fs.rs` |
 | Updater | `src-tauri/src/updater.rs` |

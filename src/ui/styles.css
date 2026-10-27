@@ -1527,6 +1527,12 @@ table.data td.num {
   font-size: var(--fs-sm);
 }
 
+/* Pantalla de desbloqueo del cifrado */
+.unlock-card {
+  width: min(440px, calc(100vw - 32px));
+  padding: 24px;
+}
+
 /* ------------------------------------------------------------------
    19. Layout adaptativo por window size class
    ------------------------------------------------------------------ */

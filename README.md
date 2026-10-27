@@ -60,7 +60,7 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 - **Updates:** signed search and installation with minisign. Desktop uses Tauri updater; Android downloads APK, verifies signature and saves to **Downloads** folder for manual installation.
 - **Daily backups:** automatic rotation to `backups/daily/YYYY-MM-DD/`, per-device vault copy (filesystem on desktop, SAF on Android), SHA-256 manifest and append-only restore from the vault.
 - **Auto-sync:** debounced sync after local changes, periodic sync, exponential backoff and battery-saver mode.
-- **Payload encryption (opt-in):** Argon2id key derivation + XChaCha20-Poly1305 over the event `payload`; metadata stays in plaintext for ordering and sync. The key lives only in RAM.
+- **Payload encryption (opt-in):** random 32-byte DEK that encrypts each event `payload` with XChaCha20-Poly1305; the DEK is wrapped (Argon2id) by a master password **and** a one-time recovery code. Metadata stays in plaintext for ordering and sync. The keyring lives in `keys/keyring.json`; the unlocked key only in RAM. Sharing data across devices requires importing the same keyring (`Ajustes → Cifrado`). Backups include the keyring. Password change re-wraps the DEK; key rotation re-encrypts everything.
 - Risk zone (clear data — pending full implementation).
 
 ### Data Semantics

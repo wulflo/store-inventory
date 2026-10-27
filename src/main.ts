@@ -60,6 +60,26 @@ async function boot(): Promise<void> {
     });
   }
 
+  /* --- Desbloqueo del cifrado (antes de proyectar el estado) --- */
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const storeRoot =
+      typeof (store as any).getRoot === 'function'
+        ? ((store as TauriEventStore).getRoot() ?? null)
+        : null;
+    if (storeRoot) {
+      const state = await invoke<{
+        enabled: boolean;
+        unlocked: boolean;
+        kid?: string | null;
+      }>('crypto_boot_state', { root: storeRoot });
+      if (state.enabled && !state.unlocked) {
+        const { showUnlockScreen } = await import('./ui/views/unlock');
+        await showUnlockScreen(root, storeRoot);
+      }
+    }
+  }
+
   /* --- Identidad del dispositivo --- */
   const deviceId = await resolveDeviceId(store);
 

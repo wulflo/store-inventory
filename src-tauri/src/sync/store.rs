@@ -100,6 +100,10 @@ pub fn append_missing(
     return Ok(0);
   }
 
+  // Texto plano: se cifra al guardar. Bloqueado: no se escribe nada (evita
+  // guardar texto plano en un equipo cifrado).
+  let key = crate::crypto::resolve_key(root)?;
+
   let _guard = EVENTS_WRITE_LOCK
     .lock()
     .unwrap_or_else(|e| e.into_inner());
@@ -119,6 +123,18 @@ pub fn append_missing(
         domain
       ));
     }
+    match &key {
+      Some(km) => crate::crypto::ensure_compatible_payload(&ev.payload, km)?,
+      None => {
+        if crate::crypto::unwrap_encrypted(&ev.payload).is_some() {
+          return Err(
+            "Este equipo no tiene el cifrado activado y recibió eventos cifrados. \
+             Activá el cifrado con la misma contraseña maestra antes de sincronizar."
+              .to_string(),
+          );
+        }
+      }
+    }
     if ids.insert(ev.id.clone()) {
       to_write.push(ev);
     }
@@ -136,7 +152,11 @@ pub fn append_missing(
     .open(&path)
     .map_err(|e| format!("No se pudo abrir {domain}.jsonl para escritura: {e}"))?;
   for ev in &to_write {
-    let line = serde_json::to_string(ev)
+    let mut out = (*ev).clone();
+    if let Some(km) = &key {
+      out.payload = crate::crypto::encrypt_event_value(&ev.id, &ev.type_, &ev.payload, km)?;
+    }
+    let line = serde_json::to_string(&out)
       .map_err(|e| format!("No se pudo serializar el evento {}: {e}", ev.id))?;
     writeln!(file, "{line}").map_err(|e| format!("Error escribiendo eventos: {e}"))?;
   }
@@ -203,6 +223,75 @@ mod tests {
       .find(|s| s.domain == "orders")
       .unwrap();
     assert_eq!(orders.event_count, 1);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  fn enable_crypto(root: &str, password: &str) {
+    let created =
+      crate::keys::create(password, crate::keys::KdfParams::fast().unwrap()).unwrap();
+    crate::keys::save(root, &created.keyring).unwrap();
+    crate::crypto::set_current(root, created.key, created.keyring.kid.clone());
+  }
+
+  #[test]
+  fn append_missing_encrypts_incoming_plaintext_when_enabled() {
+    let root = temp_root("encrypt");
+    let root_s = root.to_string_lossy().to_string();
+    ensure_layout(&root_s).unwrap();
+    enable_crypto(&root_s, "contraseña-segura");
+
+    append_missing(&root_s, "orders", &[event("ev-1", "orders")]).unwrap();
+
+    let raw = fs::read_to_string(domain_path(&root_s, "orders")).unwrap();
+    assert!(raw.contains("\"_encrypted\":true"));
+    assert!(!raw.contains("\"payload\":{\"id\""));
+
+    // El sobre sigue siendo parseable para el protocolo de sync.
+    let loaded = load_domain(&root_s, "orders").unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].id, "ev-1");
+
+    crate::crypto::clear_current_for(&root_s);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn append_missing_rejects_events_from_a_foreign_key() {
+    let root = temp_root("foreign");
+    let root_s = root.to_string_lossy().to_string();
+    ensure_layout(&root_s).unwrap();
+    enable_crypto(&root_s, "contraseña-segura");
+
+    let foreign =
+      crate::keys::create("otra-contraseña", crate::keys::KdfParams::fast().unwrap()).unwrap();
+    let foreign_km = crate::crypto::KeyMaterial {
+      key: foreign.key,
+      kid: foreign.keyring.kid.clone(),
+    };
+    let mut ev = event("ev-2", "orders");
+    ev.payload =
+      crate::crypto::encrypt_event_value("ev-2", "Order.Created", &ev.payload, &foreign_km)
+        .unwrap();
+
+    let err = append_missing(&root_s, "orders", &[ev]).unwrap_err();
+    assert!(err.contains("otra clave"), "mensaje inesperado: {err}");
+
+    crate::crypto::clear_current_for(&root_s);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn append_missing_fails_when_locked_instead_of_writing_plaintext() {
+    let root = temp_root("locked");
+    let root_s = root.to_string_lossy().to_string();
+    ensure_layout(&root_s).unwrap();
+    enable_crypto(&root_s, "contraseña-segura");
+    crate::crypto::clear_current_for(&root_s);
+
+    let err = append_missing(&root_s, "orders", &[event("ev-1", "orders")]).unwrap_err();
+    assert!(err.starts_with(crate::crypto::LOCKED_PREFIX), "mensaje inesperado: {err}");
+    assert!(!domain_path(&root_s, "orders").exists());
+
     let _ = fs::remove_dir_all(root);
   }
 }

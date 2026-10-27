@@ -98,6 +98,9 @@ pub fn store_append(root: String, domain: String, lines: Vec<String>) -> Result<
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent).map_err(|e| format!("No se pudo crear la carpeta de eventos: {e}"))?;
   }
+  // Con el cifrado activado, el payload se cifra de forma transparente.
+  // Si el llavero existe pero está bloqueado, esto falla con `ENC_LOCKED:`.
+  let key = crate::crypto::resolve_key(&root)?;
   let _guard = EVENTS_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   let mut file = fs::OpenOptions::new()
     .create(true)
@@ -106,7 +109,11 @@ pub fn store_append(root: String, domain: String, lines: Vec<String>) -> Result<
     .map_err(|e| format!("No se pudo abrir el archivo de dominio para escritura: {e}"))?;
   for line in &lines {
     if !line.is_empty() {
-      writeln!(file, "{line}").map_err(|e| format!("Error escribiendo en el archivo de dominio: {e}"))?;
+      let out = match &key {
+        Some(km) => crate::crypto::encrypt_event_line(line, km)?,
+        None => line.clone(),
+      };
+      writeln!(file, "{out}").map_err(|e| format!("Error escribiendo en el archivo de dominio: {e}"))?;
     }
   }
   file.flush().map_err(|e| format!("Error haciendo flush del archivo de dominio: {e}"))?;
@@ -116,11 +123,18 @@ pub fn store_append(root: String, domain: String, lines: Vec<String>) -> Result<
 /** Lee todo el contenido de un archivo de dominio. Devuelve cadena vacía si no existe. */
 #[tauri::command]
 pub fn store_read(root: String, domain: String) -> Result<String, String> {
+  // Se resuelve la clave antes de leer: con el cifrado activado y bloqueado
+  // no se devuelve ni siquiera el texto cifrado.
+  let key = crate::crypto::resolve_key(&root)?;
   let path = domain_path(&root, &domain);
-  match fs::read_to_string(&path) {
-    Ok(text) => Ok(text),
-    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-    Err(e) => Err(format!("No se pudo leer el archivo de dominio: {e}")),
+  let text = match fs::read_to_string(&path) {
+    Ok(text) => text,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+    Err(e) => return Err(format!("No se pudo leer el archivo de dominio: {e}")),
+  };
+  match key {
+    Some(km) => crate::crypto::decrypt_events_text(&text, &km),
+    None => Ok(text),
   }
 }
 

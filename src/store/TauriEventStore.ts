@@ -67,17 +67,29 @@ export class TauriEventStore implements EventStore {
     if (!this.root) return [];
     const raw = await this.invoke<string>('store_read', { root: this.root, domain });
     const events: DomainEvent[] = [];
+    const seen = new Set<string>();
     for (const line of raw.split('\n')) {
       const ev = parseEventLine(line);
-      if (ev) events.push(ev);
+      // Un mismo evento puede aparecer duplicado si se fusionó una bóveda
+      // cifrada (mismo id, distinto nonce). Se aplica una sola vez.
+      if (ev && !seen.has(ev.id)) {
+        seen.add(ev.id);
+        events.push(ev);
+      }
     }
     return sortEvents(events);
   }
 
   async readAll(): Promise<DomainEvent[]> {
     const all: DomainEvent[] = [];
+    const seen = new Set<string>();
     for (const domain of DOMAIN_LIST) {
-      all.push(...(await this.read(domain)));
+      for (const ev of await this.read(domain)) {
+        if (!seen.has(ev.id)) {
+          seen.add(ev.id);
+          all.push(ev);
+        }
+      }
     }
     return sortEvents(all);
   }

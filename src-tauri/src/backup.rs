@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 static BACKUP_MERGE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -65,6 +65,8 @@ pub struct BackupPullResult {
   pulled_files: usize,
   added_lines: usize,
   scanned_devices: usize,
+  /// Eventos descartados por estar cifrados con otra clave o ilegibles.
+  skipped_incompatible: usize,
 }
 
 fn today_str() -> String {
@@ -215,7 +217,7 @@ fn last_backup_info(root: &str) -> (Option<String>, Option<String>) {
   }
 }
 
-fn read_all_lines_set(path: &Path) -> HashSet<String> {
+fn read_event_ids(path: &Path) -> HashSet<String> {
   let mut set = HashSet::new();
   if !path.exists() {
     return set;
@@ -223,13 +225,26 @@ fn read_all_lines_set(path: &Path) -> HashSet<String> {
   if let Ok(file) = fs::File::open(path) {
     let reader = BufReader::new(file);
     for line in reader.lines().map_while(Result::ok) {
-      let trimmed = line.trim();
-      if !trimmed.is_empty() {
-        set.insert(trimmed.to_string());
+      if let Some(id) = line_event_id(line.trim()) {
+        set.insert(id);
       }
     }
   }
   set
+}
+
+/// Extrae el `id` de una línea JSONL, si es válida.
+fn line_event_id(line: &str) -> Option<String> {
+  if line.is_empty() {
+    return None;
+  }
+  let value: serde_json::Value = serde_json::from_str(line).ok()?;
+  let id = value.get("id")?.as_str()?.trim();
+  if id.is_empty() {
+    None
+  } else {
+    Some(id.to_string())
+  }
 }
 
 #[tauri::command]
@@ -311,15 +326,38 @@ pub fn backup_run_daily(app: AppHandle, root: String, force: Option<bool>) -> Re
   let mut files_list: Vec<BackupFile> = Vec::new();
   let mut total_bytes: u64 = 0;
 
-  for domain in domains {
-    let src = events_dir.join(format!("{domain}.jsonl"));
-    if src.exists() {
-      let dst = local_backup_dir.join(format!("{domain}.jsonl"));
-      let bytes = copy_file(&src, &dst)?;
+  {
+    // Copiar eventos y llavero bajo el mismo lock: una migración/rotación no
+    // puede dejar el respaldo con archivos de dos claves distintas.
+    let _events_guard = crate::event_store::EVENTS_WRITE_LOCK
+      .lock()
+      .unwrap_or_else(|e| e.into_inner());
+
+    for domain in domains {
+      let src = events_dir.join(format!("{domain}.jsonl"));
+      if src.exists() {
+        let dst = local_backup_dir.join(format!("{domain}.jsonl"));
+        let bytes = copy_file(&src, &dst)?;
+        let sha = sha256_file(&dst)?;
+        total_bytes += bytes;
+        files_list.push(BackupFile {
+          name: format!("{domain}.jsonl"),
+          bytes,
+          sha256: sha,
+        });
+      }
+    }
+
+    // El llavero viaja con el respaldo para poder restaurar en otro equipo con
+    // la misma contraseña. Está envuelto: sin la contraseña/código no sirve.
+    let keyring_src = crate::keys::keyring_path(&root);
+    if keyring_src.exists() {
+      let dst = local_backup_dir.join("keyring.json");
+      let bytes = copy_file(&keyring_src, &dst)?;
       let sha = sha256_file(&dst)?;
       total_bytes += bytes;
       files_list.push(BackupFile {
-        name: format!("{domain}.jsonl"),
+        name: "keyring.json".to_string(),
         bytes,
         sha256: sha,
       });
@@ -485,6 +523,14 @@ pub fn backup_run_daily(app: AppHandle, root: String, force: Option<bool>) -> Re
 #[tauri::command]
 pub fn backup_pull_from_vault(app: AppHandle, root: String) -> Result<BackupPullResult, String> {
   let _lock = BACKUP_MERGE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+  // Fusionar texto plano en un equipo cifrado lo dejaría sin cifrar, y fusionar
+  // ciphertext de otra clave dejaría eventos ilegibles. Se exige desbloqueo.
+  if crate::crypto::is_enabled(&root) && crate::crypto::current_key(&root).is_none() {
+    return Err(
+      "ENC_LOCKED: Desbloqueá el cifrado antes de fusionar respaldos.".to_string(),
+    );
+  }
+  let local_key = crate::crypto::current_key(&root);
   let vault_path_str = read_vault_path(&root).ok_or_else(|| {
     "No hay bóveda externa configurada. Configurá la ruta en Ajustes > Respaldos diarios."
       .to_string()
@@ -525,6 +571,7 @@ pub fn backup_pull_from_vault(app: AppHandle, root: String) -> Result<BackupPull
   let mut pulled_files: usize = 0;
   let mut added_lines: usize = 0;
   let mut scanned_devices: usize = 0;
+  let mut skipped_incompatible: usize = 0;
   let mut seen_global: std::collections::HashSet<String> = std::collections::HashSet::new();
 
   let mut device_entries: Vec<PathBuf> = Vec::new();
@@ -574,7 +621,8 @@ pub fn backup_pull_from_vault(app: AppHandle, root: String) -> Result<BackupPull
         if let Some(parent) = dst.parent() {
           fs::create_dir_all(parent).ok();
         }
-        let existing = read_all_lines_set(&dst);
+        let existing_ids = read_event_ids(&dst);
+        let mut ids = existing_ids.clone();
         let mut to_add: Vec<String> = Vec::new();
         if let Ok(file) = fs::File::open(&src) {
           let reader = BufReader::new(file);
@@ -583,19 +631,66 @@ pub fn backup_pull_from_vault(app: AppHandle, root: String) -> Result<BackupPull
             if trimmed.is_empty() {
               continue;
             }
-            let key = format!("{domain}|{trimmed}");
-            if seen_global.contains(&key) {
+            // Deduplicar por `id`, no por línea completa: un mismo evento puede
+            // llegar cifrado con otro nonce (misma clave) y no debe duplicarse.
+            let Some(id) = line_event_id(trimmed) else {
+              skipped_incompatible += 1;
+              continue;
+            };
+            if ids.contains(&id) {
               continue;
             }
-            if existing.contains(trimmed) {
-              seen_global.insert(key);
+            if !seen_global.insert(format!("{domain}|{id}")) {
               continue;
             }
-            to_add.push(trimmed.to_string());
-            seen_global.insert(key);
+
+            let mut event: serde_json::Value = match serde_json::from_str(trimmed) {
+              Ok(value) => value,
+              Err(_) => {
+                skipped_incompatible += 1;
+                continue;
+              }
+            };
+            let payload = event
+              .get("payload")
+              .cloned()
+              .unwrap_or(serde_json::Value::Null);
+
+            let stored = match &local_key {
+              Some(km) => {
+                if crate::crypto::ensure_compatible_payload(&payload, km).is_err() {
+                  skipped_incompatible += 1;
+                  continue;
+                }
+                let event_type = event
+                  .get("type")
+                  .and_then(|v| v.as_str())
+                  .unwrap_or_default();
+                let sealed =
+                  crate::crypto::encrypt_event_value(&id, event_type, &payload, km)
+                    .map_err(|e| format!("No se pudo cifrar el evento {id} al fusionar: {e}"))?;
+                event["payload"] = sealed;
+                serde_json::to_string(&event)
+                  .map_err(|e| format!("No se pudo serializar el evento {id}: {e}"))?
+              }
+              None => {
+                if crate::crypto::unwrap_encrypted(&payload).is_some() {
+                  skipped_incompatible += 1;
+                  continue;
+                }
+                trimmed.to_string()
+              }
+            };
+
+            ids.insert(id);
+            to_add.push(stored);
           }
         }
         if !to_add.is_empty() {
+          // Misma exclusión que store_append para no mezclar escrituras.
+          let _write_guard = crate::event_store::EVENTS_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
           let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -617,6 +712,7 @@ pub fn backup_pull_from_vault(app: AppHandle, root: String) -> Result<BackupPull
     pulled_files,
     added_lines,
     scanned_devices,
+    skipped_incompatible,
   })
 }
 
