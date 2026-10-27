@@ -65,7 +65,7 @@ La carpeta local de secretos debe estar con permisos `700` y los archivos `600`.
 un job no lo declara, GitHub entrega los secretos vacíos y la firma falla con
 `Missing comment in secret key`.
 
-## Actualizaciones (desktop)
+## Actualizaciones (desktop y Android)
 
 - Endpoint: `https://github.com/wulflo/store-inventory/releases/latest/download/latest.json`.
 - `bundle.createUpdaterArtifacts: true` hace que `tauri build` firme directamente
@@ -73,11 +73,16 @@ un job no lo declara, GitHub entrega los secretos vacíos y la firma falla con
   `.sig`. El script también acepta los formatos v1 (`.AppImage.tar.gz`,
   `.nsis.zip`, `.msi.zip`) por compatibilidad.
 - `scripts/latest-json.mjs` arma el `latest.json` real con versión, fecha,
-  plataforma, URL y firma. El workflow `release.yml` lo publica junto al release.
-  GitHub reemplaza los espacios del nombre del asset por puntos; el script
+  plataforma, URL y firma en **base64** (compatible con Tauri). Soporta
+  `android-aarch64`, `android-armv7`, `android-x86_64`, `android-i686` y
+  `android-universal`. El workflow firma el APK universal con `tauri signer sign`
+  y genera `app-universal-release.apk.sig`.
+- El updater de escritorio usa `tauri-plugin-updater`. En Android la app descarga
+  el APK, verifica la firma minisign con la clave pública configurada, lo guarda
+  en la carpeta **Descargas** vía MediaStore (Android 10+) o almacenamiento
+  legacy con permiso `WRITE_EXTERNAL_STORAGE` (Android 9) y pide instalarlo.
+- GitHub reemplaza los espacios del nombre del asset por puntos; el script
   normaliza la URL para que el updater no reciba un 404.
-- El updater **solo funciona en Windows/Linux/macOS**. En Android se actualiza
-  reinstalando el APK o desde la tienda; la UI lo informa.
 - Un release en **draft** no alimenta `releases/latest`: el updater solo ve
   versiones publicadas.
 

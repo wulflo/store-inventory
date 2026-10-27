@@ -52,6 +52,16 @@ export function updaterArtifact(fileName) {
   if (fileName.endsWith('.msi')) return { platform: 'windows-x86_64', rank: 2 };
   if (fileName.endsWith('.msi.zip')) return { platform: 'windows-x86_64', rank: 1 };
 
+  // APK universal para el actualizador interno de Android. Si en el futuro se
+  // publican APK divididos por ABI, también los reconocemos.
+  if (fileName.endsWith('.apk')) {
+    if (/universal/i.test(fileName)) return { platform: 'android-universal', rank: 5 };
+    if (/arm64-v8a|aarch64/i.test(fileName)) return { platform: 'android-aarch64', rank: 4 };
+    if (/armeabi-v7a|armv7/i.test(fileName)) return { platform: 'android-armv7', rank: 3 };
+    if (/x86_64/i.test(fileName)) return { platform: 'android-x86_64', rank: 2 };
+    if (/x86/i.test(fileName)) return { platform: 'android-i686', rank: 1 };
+  }
+
   return null;
 }
 
@@ -91,10 +101,13 @@ export function buildLatestJson({
 
     const signature = readFileSync(sigPath, 'utf8').trim();
     if (!signature) throw new Error(`Firma vacía: ${sigPath}`);
+    // Tauri espera el contenido del .sig codificado en base64, no el texto
+    // crudo de minisign.
+    const signatureBase64 = Buffer.from(signature, 'utf8').toString('base64');
 
     platforms[artifact.platform] = {
       rank: artifact.rank,
-      signature,
+      signature: signatureBase64,
       url: `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(assetName)}`,
     };
   }

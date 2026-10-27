@@ -56,7 +56,8 @@ Gestión local-first para emprendimiento de indumentaria (remeras y buzos). Stac
 - Preferencias: moneda (ARS/USD/EUR) y tema claro/oscuro.
 - Exportar/importar respaldo JSON (todos los eventos).
 - Importación inicial de CSV (productos, clientes, pedidos) con mapeo de columnas.
-- Lista de dispositivos conocidos (para sincronización).
+- **Sincronización P2P (LAN):** emparejamiento por código SAS de 6 dígitos con TLS 1.3 mutuo y certificados autofirmados fijados (pinning). Solo acepta direcciones LAN privadas; reconciliación por dominios con deduplicación por ID.
+- **Actualizaciones:** búsqueda e instalación firmadas con minisign. En escritorio se usa el actualizador de Tauri; en Android se descarga el APK, se verifica su firma y se guarda en la carpeta **Descargas** para instalarlo manualmente.
 - Zona de riesgo (vaciar datos — pendiente de implementación completa).
 
 ### Semántica de datos
@@ -72,8 +73,7 @@ Gestión local-first para emprendimiento de indumentaria (remeras y buzos). Stac
 - App nativa: `npm run app:dev` (Tauri) / `npm run app:build`.
 - Escritorio: datos en `~/.local/share/inventario-tienda` (Linux).
 - Android: datos en el almacenamiento privado de la app (`app_data_dir`).
-- Sincronización por agentes externos sobre una carpeta de datos
-  (Syncthing/Drive) o por el protocolo P2P propio (transporte en desarrollo).
+- Sincronización P2P directa por LAN (TLS mutuo + emparejamiento SAS). También se puede sincronizar por agentes externos sobre una carpeta de datos (Syncthing/Drive).
 - Backup manual desde Ajustes; la rotación automática diaria aún no está.
 
 ### Requisitos de desarrollo
@@ -82,24 +82,12 @@ Gestión local-first para emprendimiento de indumentaria (remeras y buzos). Stac
 - Android: JDK 17, Android SDK 35/37, NDK 27 y CMake.
 
 ## Limitaciones conocidas
-- **P2P:** el núcleo (identidad, peers, framing, reconciliación) está implementado
-  y testeado; el transporte TLS/mDNS y la convergencia LAN no.
-- **Android/SAF:** funciona con almacenamiento privado; no hay selector de
-  carpeta SAF ni espejo bidireccional.
-- **Android:** el APK universal del CI (4 ABIs, 39.923.555 B) se instaló y
-  ejecutó en emulador API 35, conservando 315 eventos. Falta probarlo en un
-  dispositivo físico y validar el APK arm64 en hardware real.
-- **Actualizaciones:** el updater de escritorio está configurado y el release
-  dry-run generó los artefactos firmados; el draft `v1.0.0` todavía no está
-  publicado, así que falta probar una actualización real. En Android se actualiza
-  reinstalando.
+- **P2P:** transporte TLS 1.3 mutuo con pinning y emparejamiento SAS implementado y probado con tests; requiere estar en la misma LAN y direcciones privadas. Sin descubrimiento mDNS automático (se usa IP manual).
+- **Android/SAF:** funciona con almacenamiento privado; no hay selector de carpeta SAF ni espejo bidireccional.
+- **Android:** APK universal firmado, con soporte portrait y guardado del APK actualizado en Descargas (con permiso en Android 9). Pendiente validación en hardware físico.
+- **Actualizaciones:** updater firmado con minisign (base64 en `latest.json`). En Android se verifica la firma antes de guardar el APK; en escritorio usa `tauri-plugin-updater`. Requiere que el release esté publicado.
 - **Firma Windows:** sin certificado Authenticode (posible aviso de SmartScreen).
-- **CI/CD:** CI [`40484597887`](https://github.com/wulflo/store-inventory/actions/runs/40484597887)
-  en verde y release dry-run [`40484612737`](https://github.com/wulflo/store-inventory/actions/runs/40484612737)
-  completo (Linux, Windows, Android y publish). El draft `v1.0.0` tiene 10
-  assets firmados; falta publicarlo.
-- **Testing:** 45 tests vitest + 15 tests Rust; sin Playwright/E2E. La UI se
-  verificó manualmente en navegador y emulador Android.
-- **Dependencias:** Dependabot reporta 17 alertas en `main`; `npm audit` local da
-  6 vulnerabilidades dev-only, 0 en producción.
+- **CI/CD:** el workflow firma el APK Android con la keystore release, genera `.apk.sig` para el updater y publica `latest.json` con firmas reales.
+- **Testing:** 49 tests vitest + 31 tests Rust; sin Playwright/E2E. La UI se verificó manualmente en navegador y emulador Android.
+- **Dependencias:** Dependabot reporta alertas en `main`; revisar con regularidad.
 - **Logo:** falta el archivo de logo definitivo.

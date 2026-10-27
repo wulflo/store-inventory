@@ -16,6 +16,11 @@ pub struct Peer {
   pub paired_at: u64,
   pub last_seen: Option<u64>,
   pub address: Option<String>, // "ip:puerto" última dirección conocida
+  /// Certificado X.509 del peer en PEM. Se usa para fijar (pin) su identidad
+  /// en cada conexión TLS. Los peers creados antes de la fase 2 no lo tienen
+  /// y deben volver a emparejarse.
+  #[serde(default)]
+  pub cert_pem: String,
 }
 
 impl Peer {
@@ -31,7 +36,13 @@ impl Peer {
         .unwrap_or(0),
       last_seen: None,
       address: None,
+      cert_pem: String::new(),
     }
+  }
+
+  pub fn with_cert(mut self, cert_pem: String) -> Self {
+    self.cert_pem = cert_pem;
+    self
   }
 }
 
@@ -61,6 +72,19 @@ impl PeersStore {
 
   pub fn list(&self) -> Vec<&Peer> {
     self.peers.values().collect()
+  }
+
+  /** Devuelve el peer de confianza cuyo certificado tiene esta huella. */
+  pub fn trusted_by_fingerprint(&self, fingerprint: &str) -> Option<&Peer> {
+    self
+      .peers
+      .values()
+      .find(|p| p.trusted && p.fingerprint.eq_ignore_ascii_case(fingerprint))
+  }
+
+  /** Devuelve el peer de confianza con este device id. */
+  pub fn trusted_by_device_id(&self, device_id: &str) -> Option<&Peer> {
+    self.peers.get(device_id).filter(|p| p.trusted)
   }
 
   pub fn remove(&mut self, device_id: &str) -> Option<Peer> {

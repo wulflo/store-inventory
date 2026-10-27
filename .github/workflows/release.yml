@@ -267,12 +267,28 @@ jobs:
       - name: Build APK y AAB firmados
         run: npx tauri android build --apk --aab --target aarch64 armv7 i686 x86_64
 
+      - name: Firmar APK universal para el actualizador
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*universal*release*.apk' | head -1)
+          if [ -z "$APK" ]; then
+            echo "No se encontró el APK universal" >&2
+            find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' >&2
+            exit 1
+          fi
+          npx tauri signer sign --app-version "$VERSION" "$APK"
+          test -f "$APK.sig"
+
       - name: Subir artefactos Android
         uses: actions/upload-artifact@v4
         with:
           name: android
           path: |
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk.sig
             src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
           if-no-files-found: error
 

@@ -95,6 +95,17 @@ async function boot(): Promise<void> {
   registerRoutes(app, shell);
   shell.router.start();
 
+  /* --- Eventos del backend de sincronización --- */
+  if (isTauri()) {
+    const { listen } = await import('@tauri-apps/api/event');
+    await listen('sync-updated', () => {
+      void app
+        .rebuild()
+        .then(() => window.dispatchEvent(new CustomEvent('inventario:sync-updated')))
+        .catch((err) => console.error('No se pudo recargar tras sincronizar', err));
+    });
+  }
+
   document.getElementById('boot')?.remove();
 }
 

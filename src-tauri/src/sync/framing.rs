@@ -8,9 +8,10 @@ use tokio::io::AsyncWriteExt;
 /** Tamaño máximo de un frame individual (1 MiB). */
 pub const MAX_FRAME_SIZE: usize = 1_024 * 1024;
 
-/** Longitud máxima de un lote de eventos (≤500 eventos o ≤1 MiB). */
+/** Longitud máxima de un lote de eventos (≤500 eventos o ≤512 KiB). */
 pub const MAX_BATCH_EVENTS: usize = 500;
-pub const MAX_BATCH_BYTES: usize = MAX_FRAME_SIZE;
+// Dejamos margen para el sobre JSON ({domain, events}) del frame Events.
+pub const MAX_BATCH_BYTES: usize = 512 * 1024;
 
 /** Tipos de frame del protocolo. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +103,29 @@ pub async fn write_frame_async<W: tokio::io::AsyncWrite + Unpin>(
   writer.write_all(&buf).await?;
   writer.flush().await?;
   Ok(())
+}
+
+/** Lee un frame de un stream async (tokio::io::AsyncRead). */
+pub async fn read_frame_async<R: tokio::io::AsyncRead + Unpin>(
+  reader: &mut R,
+) -> io::Result<Frame> {
+  use tokio::io::AsyncReadExt;
+  let mut len_buf = [0u8; 4];
+  reader.read_exact(&mut len_buf).await?;
+  let total = u32::from_be_bytes(len_buf) as usize;
+  if total < 5 || total > MAX_FRAME_SIZE + 5 {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "longitud de frame inválida",
+    ));
+  }
+  let mut type_buf = [0u8; 1];
+  reader.read_exact(&mut type_buf).await?;
+  let r#type = FrameType::try_from(type_buf[0])?;
+  let payload_len = total - 5;
+  let mut payload = vec![0u8; payload_len];
+  reader.read_exact(&mut payload).await?;
+  Ok(Frame { r#type, payload })
 }
 
 /** Deserializa bytes a un frame (útil para tests). */

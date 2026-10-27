@@ -1,61 +1,483 @@
-use crate::sync::identity::Identity;
+use crate::sync::framing::{read_frame_async, FrameType};
+use crate::sync::identity::{device_id_from_cert, fingerprint_from_der, Identity};
+use crate::sync::net::is_lan_ip;
+use crate::sync::pairing::{now_ms, PairingRegistry, PAIRING_PORT, SYNC_PORT};
 use crate::sync::peer::PeersStore;
+use crate::sync::protocol::{batch_events, diff_summaries, validate_incoming_event, SyncSummary};
+use crate::sync::store::{append_missing, load_all, summaries_for};
+use crate::sync::tls;
+use crate::sync::wire::{
+  read_json, send_error, write_json, EventsPayload, SyncHello, SyncReport,
+};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::watch;
+use tokio_rustls::TlsAcceptor;
 
-pub struct SyncServer {
-  port: u16,
-  identity: Arc<Mutex<Option<Identity>>>,
-  peers: Arc<Mutex<PeersStore>>,
-  started: Arc<Mutex<bool>>,
+/* ------------------------------------------------------------------ */
+/* Servidor de sincronización                                         */
+/* ------------------------------------------------------------------ */
+
+const FUTURE_TOLERANCE_MS: u64 = 24 * 60 * 60 * 1000;
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(300);
+
+pub struct SyncServerHandle {
+  shutdown: watch::Sender<bool>,
+  task: tokio::task::JoinHandle<()>,
+  pub port: u16,
 }
 
-impl SyncServer {
-  pub fn new(port: u16) -> Self {
-    Self {
-      port,
-      identity: Arc::new(Mutex::new(None)),
-      peers: Arc::new(Mutex::new(PeersStore::new())),
-      started: Arc::new(Mutex::new(false)),
+impl SyncServerHandle {
+  pub fn stop(self) {
+    let _ = self.shutdown.send(true);
+    self.task.abort();
+  }
+}
+
+/**
+ * Escucha conexiones entrantes en 0.0.0.0:14242 y atiende a cada peer
+ * emparejado en su propia tarea.
+ */
+pub async fn start_sync_server(
+  identity: Identity,
+  peers: Arc<Mutex<PeersStore>>,
+  peers_path: PathBuf,
+  root: String,
+  app: AppHandle,
+) -> Result<SyncServerHandle, String> {
+  let listener = TcpListener::bind(("0.0.0.0", SYNC_PORT))
+    .await
+    .map_err(|e| {
+      format!("No se pudo abrir el puerto {SYNC_PORT}: {e}. ¿Ya hay otra instancia abierta?")
+    })?;
+  let config = tls::server_config(&identity, Arc::clone(&peers))?;
+  let acceptor = TlsAcceptor::from(Arc::new(config));
+  let (shutdown, mut rx) = watch::channel(false);
+
+  let task = tokio::spawn(async move {
+    loop {
+      tokio::select! {
+        _ = rx.changed() => break,
+        accepted = listener.accept() => {
+          match accepted {
+            Ok((tcp, remote)) => {
+              if !is_lan_ip(remote.ip()) {
+                continue;
+              }
+              let acceptor = acceptor.clone();
+              let peers = Arc::clone(&peers);
+              let peers_path = peers_path.clone();
+              let root = root.clone();
+              let app = app.clone();
+              let identity = identity.clone();
+              tokio::spawn(async move {
+                let _ = tokio::time::timeout(
+                  CONNECTION_TIMEOUT,
+                  handle_connection(tcp, acceptor, identity, peers, peers_path, root, app),
+                )
+                .await;
+              });
+            }
+            Err(_) => break,
+          }
+        }
+      }
+    }
+  });
+
+  Ok(SyncServerHandle {
+    shutdown,
+    task,
+    port: SYNC_PORT,
+  })
+}
+
+async fn handle_connection(
+  tcp: TcpStream,
+  acceptor: TlsAcceptor,
+  identity: Identity,
+  peers: Arc<Mutex<PeersStore>>,
+  peers_path: PathBuf,
+  root: String,
+  app: AppHandle,
+) {
+  let mut stream = match acceptor.accept(tcp).await {
+    Ok(stream) => stream,
+    Err(_) => return, // Certificado no emparejado o handshake inválido.
+  };
+
+  let peer_der = match stream
+    .get_ref()
+    .1
+    .peer_certificates()
+    .and_then(|certs| certs.first())
+    .map(|c| c.as_ref().to_vec())
+  {
+    Some(der) => der,
+    None => {
+      send_error(&mut stream, "Falta el certificado del cliente.").await;
+      return;
+    }
+  };
+
+  match serve_authenticated(
+    &mut stream,
+    &identity,
+    &peer_der,
+    peers,
+    &peers_path,
+    &root,
+  )
+  .await
+  {
+    Ok(report) => {
+      let _ = app.emit("sync-updated", &report);
+    }
+    Err(e) => send_error(&mut stream, e).await,
+  }
+}
+
+async fn serve_authenticated(
+  stream: &mut tokio_rustls::server::TlsStream<TcpStream>,
+  identity: &Identity,
+  peer_der: &[u8],
+  peers: Arc<Mutex<PeersStore>>,
+  peers_path: &PathBuf,
+  root: &str,
+) -> Result<SyncReport, String> {
+  let fingerprint = fingerprint_from_der(peer_der);
+  let expected_device = device_id_from_cert(peer_der);
+
+  let (kind, hello): (FrameType, SyncHello) = read_json(stream).await?;
+  if kind != FrameType::Handshake {
+    return Err("Se esperaba el saludo del cliente.".into());
+  }
+  if hello.device_id != expected_device
+    || !hello.fingerprint.eq_ignore_ascii_case(&fingerprint)
+    || hello.protocol_version != 1
+  {
+    return Err("La identidad del cliente no coincide con su certificado.".into());
+  }
+  let (peer_name, peer_id) = {
+    let store = peers.lock().unwrap_or_else(|e| e.into_inner());
+    match store.trusted_by_fingerprint(&fingerprint) {
+      Some(peer) => (peer.name.clone(), peer.device_id.clone()),
+      None => return Err("El cliente no está emparejado.".into()),
+    }
+  };
+
+  write_json(
+    stream,
+    FrameType::Handshake,
+    &SyncHello {
+      device_id: identity.device_id.clone(),
+      name: identity.name.clone(),
+      fingerprint: identity.fingerprint(),
+      protocol_version: 1,
+    },
+  )
+  .await?;
+
+  let (kind, client_summary): (FrameType, SyncSummary) = read_json(stream).await?;
+  if kind != FrameType::Summary {
+    return Err("Se esperaba el resumen del cliente.".into());
+  }
+  if client_summary.protocol_version != 1 {
+    return Err("Versión de protocolo incompatible.".into());
+  }
+
+  let local_all = load_all(root)?;
+  let local_summary = SyncSummary::new(summaries_for(&local_all));
+  write_json(stream, FrameType::Summary, &local_summary).await?;
+
+  let diff = diff_summaries(&client_summary.summaries, &local_summary.summaries);
+  let now = now_ms();
+  let mut received = 0usize;
+  let mut domains = std::collections::BTreeSet::new();
+
+  loop {
+    let frame = read_frame_async(stream)
+      .await
+      .map_err(|e| format!("Error leyendo del cliente: {e}"))?;
+    match frame.r#type {
+      FrameType::Events => {
+        let payload: EventsPayload = serde_json::from_slice(&frame.payload)
+          .map_err(|e| format!("Lote de eventos inválido: {e}"))?;
+        if payload.events.len() > crate::sync::framing::MAX_BATCH_EVENTS {
+          return Err("El cliente envió demasiados eventos en un lote.".into());
+        }
+        for ev in &payload.events {
+          validate_incoming_event(ev, now, FUTURE_TOLERANCE_MS)?;
+          if ev.domain() != payload.domain {
+            return Err(format!(
+              "El cliente envió un evento del dominio {} en el lote {}",
+              ev.domain(),
+              payload.domain
+            ));
+          }
+        }
+        let added = append_missing(root, &payload.domain, &payload.events)?;
+        if added > 0 {
+          received += added;
+          domains.insert(payload.domain.clone());
+        }
+      }
+      FrameType::Bye => break,
+      FrameType::KeepAlive | FrameType::BatchAck => {}
+      FrameType::Error => {
+        let msg = serde_json::from_slice::<crate::sync::wire::ErrorPayload>(&frame.payload)
+          .map(|e| e.message)
+          .unwrap_or_else(|_| "Error remoto desconocido".into());
+        return Err(msg);
+      }
+      FrameType::Handshake | FrameType::Summary | FrameType::IdList => {
+        return Err("Frame inesperado durante la sincronización.".into());
+      }
     }
   }
 
-  pub fn set_identity(&self, ident: Identity) {
-    *self.identity.lock().unwrap() = Some(ident);
+  let mut sent = 0usize;
+  for domain in diff.keys() {
+    let events = local_all.get(domain).cloned().unwrap_or_default();
+    if events.is_empty() {
+      continue;
+    }
+    for batch in batch_events(domain, &events) {
+      write_json(
+        stream,
+        FrameType::Events,
+        &EventsPayload {
+          domain: batch.domain.clone(),
+          events: batch.events.clone(),
+        },
+      )
+      .await?;
+      sent += batch.events.len();
+      domains.insert(batch.domain);
+    }
+  }
+  write_json(stream, FrameType::Bye, &serde_json::json!({})).await?;
+
+  // Actualizamos last_seen del peer y persistimos (best-effort).
+  {
+    let mut store = peers.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut peer) = store.remove(&peer_id) {
+      peer.last_seen = Some(now);
+      peer.trusted = true;
+      store.add_or_update(peer);
+    }
+    let _ = store.persist(peers_path);
   }
 
-  pub fn set_peers(&self, peers: PeersStore) {
-    *self.peers.lock().unwrap() = peers;
-  }
+  Ok(SyncReport {
+    peer_id,
+    peer_name,
+    sent,
+    received,
+    domains: domains.into_iter().collect(),
+    at: now,
+  })
+}
 
-  pub fn peers_handle(&self) -> Arc<Mutex<PeersStore>> {
-    Arc::clone(&self.peers)
-  }
+/* ------------------------------------------------------------------ */
+/* Servidor temporal de emparejamiento                               */
+/* ------------------------------------------------------------------ */
 
-  pub fn port(&self) -> u16 {
-    self.port
-  }
+pub struct PairingServerHandle {
+  shutdown: watch::Sender<bool>,
+  task: tokio::task::JoinHandle<()>,
+  pub expires_at: u64,
+}
 
-  pub fn start(&mut self) -> Result<(), String> {
-    *self.started.lock().unwrap() = true;
-    Ok(())
-  }
-
-  pub fn stop(&mut self) {
-    *self.started.lock().unwrap() = false;
-  }
-
-  pub fn is_started(&self) -> bool {
-    *self.started.lock().unwrap()
+impl PairingServerHandle {
+  pub fn stop(self) {
+    let _ = self.shutdown.send(true);
+    self.task.abort();
   }
 }
 
-#[cfg(test)]
-mod tests {
-  use super::*;
+pub async fn start_pairing_server(
+  identity: Identity,
+  sync_port: u16,
+  registry: Arc<Mutex<PairingRegistry>>,
+  ttl_ms: u64,
+) -> Result<PairingServerHandle, String> {
+  let listener = TcpListener::bind(("0.0.0.0", PAIRING_PORT))
+    .await
+    .map_err(|e| format!("No se pudo abrir el puerto de emparejamiento: {e}"))?;
+  let config = Arc::new(tls::pairing_server_config(&identity)?);
+  let (shutdown, mut rx) = watch::channel(false);
+  let expires_at = now_ms() + ttl_ms;
 
-  #[test]
-  fn server_creation() {
-    let s = SyncServer::new(14242);
-    assert_eq!(s.port(), 14242);
+  let task = tokio::spawn(async move {
+    let deadline = tokio::time::sleep(Duration::from_millis(ttl_ms));
+    tokio::pin!(deadline);
+    loop {
+      tokio::select! {
+        _ = rx.changed() => break,
+        _ = &mut deadline => break,
+        accepted = listener.accept() => {
+          match accepted {
+            Ok((tcp, remote)) => {
+              if !is_lan_ip(remote.ip()) { continue; }
+              let config = Arc::clone(&config);
+              let registry = Arc::clone(&registry);
+              let identity = identity.clone();
+              tokio::spawn(async move {
+                if let Ok(pending) = crate::sync::pairing::accept_pairing(
+                  &identity,
+                  tcp,
+                  sync_port,
+                  config,
+                ).await {
+                  registry.lock().unwrap_or_else(|e| e.into_inner()).add(pending);
+                }
+              });
+            }
+            Err(_) => break,
+          }
+        }
+      }
+    }
+  });
+
+  Ok(PairingServerHandle {
+    shutdown,
+    task,
+    expires_at,
+  })
+}
+
+#[cfg(test)]
+mod sync_tests {
+  use super::*;
+  use crate::sync::identity::cert_der_to_pem;
+  use crate::sync::peer::Peer;
+  use crate::sync::store::{append_missing, load_all};
+  use crate::sync::store_types::{DomainEvent, EventMetadata};
+  use std::sync::atomic::{AtomicU64, Ordering};
+
+  static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+  fn temp_root(label: &str) -> String {
+    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!(
+      "inventario-sync-{label}-{}-{id}",
+      std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.to_string_lossy().to_string()
+  }
+
+  fn event(id: &str, device: &str, hlc: u64) -> DomainEvent {
+    DomainEvent {
+      id: id.into(),
+      type_: "Order.Created".into(),
+      payload: serde_json::json!({ "orderId": id }),
+      metadata: EventMetadata {
+        hlc,
+        device_id: device.into(),
+        timestamp: hlc,
+        version: 1,
+      },
+    }
+  }
+
+  #[tokio::test]
+  async fn exchanges_events_over_pinned_mtls() {
+    let server_identity = Identity::generate("Servidor").unwrap();
+    let client_identity = Identity::generate("Cliente").unwrap();
+    let root_server = temp_root("server");
+    let root_client = temp_root("client");
+
+    let client_peer = Peer::new(
+      client_identity.device_id.clone(),
+      "Cliente".into(),
+      client_identity.fingerprint(),
+    )
+    .with_cert(cert_der_to_pem(&client_identity.cert_der));
+    let mut server_peers = PeersStore::new();
+    server_peers.add_or_update(client_peer);
+    let server_peers = Arc::new(Mutex::new(server_peers));
+    let peers_path = PathBuf::from(&root_server).join("peers.json");
+
+    let client_server_peer = Peer::new(
+      server_identity.device_id.clone(),
+      "Servidor".into(),
+      server_identity.fingerprint(),
+    )
+    .with_cert(cert_der_to_pem(&server_identity.cert_der));
+
+    let server_config = Arc::new(
+      tls::server_config(&server_identity, Arc::clone(&server_peers)).unwrap(),
+    );
+    let acceptor = TlsAcceptor::from(server_config);
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn({
+      let root = root_server.clone();
+      let peers = Arc::clone(&server_peers);
+      let identity = server_identity.clone();
+      async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let mut stream = acceptor.accept(tcp).await.unwrap();
+        let peer_der = stream
+          .get_ref()
+          .1
+          .peer_certificates()
+          .unwrap()
+          .first()
+          .unwrap()
+          .as_ref()
+          .to_vec();
+        serve_authenticated(&mut stream, &identity, &peer_der, peers, &peers_path, &root)
+          .await
+          .unwrap()
+      }
+    });
+
+    append_missing(
+      &root_server,
+      "orders",
+      &[event("server-order", &server_identity.device_id, 10)],
+    )
+    .unwrap();
+    append_missing(
+      &root_client,
+      "orders",
+      &[event("client-order", &client_identity.device_id, 20)],
+    )
+    .unwrap();
+
+    let report = crate::sync::client::sync_peer(
+      &client_identity,
+      &root_client,
+      &client_server_peer,
+      addr,
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.sent, 1);
+    assert_eq!(report.received, 1);
+
+    let server_report = server.await.unwrap();
+    assert_eq!(server_report.sent, 1);
+    assert_eq!(server_report.received, 1);
+
+    let server_events = load_all(&root_server).unwrap();
+    let client_events = load_all(&root_client).unwrap();
+    let server_orders = &server_events["orders"];
+    let client_orders = &client_events["orders"];
+    assert_eq!(server_orders.len(), 2);
+    assert_eq!(client_orders.len(), 2);
+    assert!(server_orders.iter().any(|e| e.id == "client-order"));
+    assert!(client_orders.iter().any(|e| e.id == "server-order"));
+
+    let _ = std::fs::remove_dir_all(root_server);
+    let _ = std::fs::remove_dir_all(root_client);
   }
 }

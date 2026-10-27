@@ -6,14 +6,15 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 
 | Componente | Versión / rango | Origen |
 |------------|----------------|--------|
-| TypeScript | `^5.6.3` | `package.json` (existente) |
-| Vite | `^5.4.11` | `package.json` (existente) |
-| vitest | `^2.1.8` | `package.json` (existente) |
-| Tauri API | `@tauri-apps/api ^2.1.1` | `package.json` (existente) |
-| Tauri CLI | `@tauri-apps/cli ^2.1.0` | `package.json` (existente) |
-| Tauri plugin fs | `@tauri-apps/plugin-fs ^2.2.0` | `package.json` (existente) |
-| Tauri plugin dialog | `@tauri-apps/plugin-dialog ^2.2.0` | `package.json` (existente) |
-| Tauri plugin opener | `@tauri-apps/plugin-opener ^2.2.5` | `package.json` (existente) |
+| TypeScript | `^5.6.3` | `package.json` |
+| Vite | `^6.4.5` | `package.json` |
+| vitest | `^4.1.12` | `package.json` |
+| Tauri API | `@tauri-apps/api ^2.1.1` | `package.json` |
+| Tauri CLI | `@tauri-apps/cli ^2.1.0` | `package.json` |
+| Tauri plugin fs | `@tauri-apps/plugin-fs ^2.2.0` | `package.json` |
+| Tauri plugin dialog | `@tauri-apps/plugin-dialog ^2.2.0` | `package.json` |
+| Tauri plugin opener | `@tauri-apps/plugin-opener ^2.2.5` | `package.json` |
+| Tauri plugin updater | `@tauri-apps/plugin-updater ^2.2.0` | `package.json` |
 | Puerto dev | `127.0.0.1:1420` (strictPort) | `vite.config.ts` |
 | Eventos | JSONL append-only, 1 dominio = 1 archivo `.jsonl` | `src/store/EventStore.ts` |
 | IDs | UUID v7 (RFC 9562), sin autoincrement | `src/core/ids.ts` |
@@ -25,6 +26,7 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 | JDK Android | Temurin 17.0.21 | `~/.local/share/jdks/temurin-17` |
 | Android SDK | platforms 35/37, build-tools 35/37 | `/home/alonso/Android/Sdk` |
 | Android NDK | 27.0.12077973 | `/home/alonso/Android/Sdk/ndk` |
+| Versión actual | `0.1.3` / Android `versionCode 1003` | `package.json`, `src-tauri/tauri.conf.json` |
 
 ## Decisiones por fase (por rellenar al cerrar cada fase)
 
@@ -64,43 +66,18 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
   con el certificado release e instalado en emulador; los 315 eventos sobreviven
   a `adb install -r` y al reinicio.
 
-### Fase 2 — P2P cifrado LAN (PARCIAL — núcleo implementado, transporte esqueleto)
-- Núcleo implementado y testeado (15 tests Rust): identidad (Ed25519 + cert
-  autofirmado, Device ID = SHA-256 del cert, código SAS), peers emparejados,
-  framing (prefijo de longitud, 1 MiB max), protocolo de reconciliación por
-  dominio (resumen, diff de IDs, lotes ≤500 eventos/1 MiB, SHA-256 por lote,
-  validación de HLC futuro).
-- Comandos Tauri: `sync_generate_identity`, `sync_list_peers`, `sync_start`,
-  `sync_stop`.
-- UI en Ajustes → Sincronización (esqueleto M3).
-- **Transporte TLS 1.3 mutuo (rustls) y mDNS: NO implementado.** `ring` y
-  `aws-lc-rs` ya compilan para Android con el NDK 27; el bloqueo anterior quedó
-  resuelto, pero falta el servidor/cliente real, el descubrimiento y la prueba de
-  convergencia entre dos dispositivos.
+### Fase 2 — P2P cifrado LAN (IMPLEMENTADO)
+- Núcleo implementado y testeado (tests Rust): identidad con cert autofirmado (rcgen), Device ID = SHA-256 del cert, nombre persistido en `name.txt`, peers emparejados con certificado fijado, framing (prefijo 1 MiB, lotes), reconciliación por dominios con deduplicación por ID y validación HLC futuro.
+- **TLS 1.3 mutuo con rustls `ring`:** verificador personalizado para pinning; proveedor explícito. Solo conexiones desde IPs LAN privadas.
+- **Emparejamiento SAS:** código canónico de 6 dígitos a partir de ambos certificados, confirmado localmente. Puertos `14243` (emparejamiento) / `14242` (sincronización).
+- **Sincronización bidireccional:** `append_missing` idempotente, `EVENTS_WRITE_LOCK`, emisión `sync-updated`, UI se actualiza con `app.rebuild()`. El motor usa la misma ruta de datos que la UI.
+- Comandos Tauri: `sync_local_info`, `sync_start/stop`, `sync_pair_*`, `sync_now`, `sync_list_peers`, `sync_set_peer_address`, `sync_remove_peer`. UI en Ajustes → Sincronización. Sin mDNS automático (entrada manual de IP).
 
-### Fase 5 — Actualizaciones (IMPLEMENTADO, SIN PRUEBA E2E)
-- `tauri-plugin-updater` solo en escritorio (`#[cfg(not(target_os = "android"))]`).
-- `cmd_updater_check` usa `UpdaterExt`; en Android devuelve un mensaje que indica
-  reinstalar el APK/actualizar desde la tienda.
-- UI en Ajustes → Actualizaciones con estado reactivo (buscando, al día,
-  disponible, error).
-- `tauri.conf.json`: pubkey real, endpoint
-  `https://github.com/wulflo/store-inventory/releases/latest/download/latest.json`
-  y `bundle.createUpdaterArtifacts: true`.
-- `scripts/latest-json.mjs` genera el manifiesto real desde los `.sig`.
-  Soporta los artefactos directos de Tauri v2 (`AppImage`, `.exe`, `.msi`) y los
-  formatos v1 (`.AppImage.tar.gz`, `.nsis.zip`, `.msi.zip`), con 8 tests.
-- El release dry-run `40484612737` generó desde artefactos reales del CI:
-  AppImage 83.683.832 B + `.sig` 452 B, NSIS 3.622.879 B + `.sig` 448 B, MSI
-  5.488.640 B + `.sig` 448 B y `latest.json` de 1.373 B. Las firmas del
-  manifiesto coinciden con los `.sig`.
-- GitHub reemplaza los espacios del nombre del asset por puntos; el script
-  normaliza la URL (`Inventario.Tienda…`) para evitar un 404 del updater.
-- Claves generadas y secretos cargados en el Environment `release` de GitHub.
-  Ver `docs/RELEASE.md`.
-- El draft `v1.0.0` (`isDraft: true`, sin tag público) no alimenta
-  `releases/latest`; el endpoint real todavía devuelve 404.
-- **Pendiente:** publicar el release y probar una actualización real.
+### Fase 5 — Actualizaciones (IMPLEMENTADO)
+- Desktop: `tauri-plugin-updater` con `bundle.createUpdaterArtifacts: true`. Pubkey real y endpoint `https://github.com/wulflo/store-inventory/releases/latest/download/latest.json`.
+- **Android:** actualizador propio (`updater.rs` + `android_fs.rs` + Kotlin `Downloads`). Descarga `latest.json`, selecciona APK por ABI (prefiere específico, fallback `android-universal`/`android`), verifica firma minisign con la clave pública, guarda en **Descargas** vía MediaStore (Android 10+) o legacy con `WRITE_EXTERNAL_STORAGE` en Android 9 (solicitud en runtime). Permiso declarado con `maxSdkVersion=28`.
+- `scripts/latest-json.mjs` genera `latest.json` con firmas **base64** (compatible con Tauri). Mapea AppImage/EXE/MSI/NSIS y `*.apk` a `android-universal`. 49 tests JS totales.
+- CI firma el APK universal con `tauri signer sign` y publica `*.apk.sig`. Assets normalizados para evitar espacios. **Pendiente:** probar actualización real contra release publicado.
 
 ### Fase 6 — CI/CD
 - `ci.yml`: typecheck, 45 tests vitest, `cargo test` (15), builds Linux/Windows

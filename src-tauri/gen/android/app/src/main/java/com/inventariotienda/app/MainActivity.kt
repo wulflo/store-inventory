@@ -7,7 +7,14 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
+  companion object {
+    /** Referencia viva para pedir permisos desde el puente JNI del actualizador. */
+    @Volatile
+    var instance: MainActivity? = null
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
+    instance = this
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 
@@ -20,5 +27,19 @@ class MainActivity : TauriActivity() {
       insets
     }
     ViewCompat.requestApplyInsets(content)
+  }
+
+  override fun onRequestPermissionsResult(
+    requestCode: Int,
+    permissions: Array<out String>,
+    grantResults: IntArray,
+  ) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    Downloads.onPermissionResult(requestCode)
+  }
+
+  override fun onDestroy() {
+    if (instance === this) instance = null
+    super.onDestroy()
   }
 }

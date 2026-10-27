@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { buildLatestJson, platformFor, walkFiles } from '../scripts/latest-json.mjs';
 
 const dirs: string[] = [];
+const b64 = (value: string): string => Buffer.from(value, 'utf8').toString('base64');
 
 function makeArtifacts(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), 'latest-json-'));
@@ -29,7 +30,9 @@ describe('latest-json', () => {
     expect(platformFor('app_1.0.0_x64-setup.exe')).toBe('windows-x86_64');
     expect(platformFor('app_1.0.0_x64_en-US.msi')).toBe('windows-x86_64');
     expect(platformFor('app_1.0.0_x64_en-US.msi.zip')).toBe('windows-x86_64');
-    expect(platformFor('app-release.apk')).toBeNull();
+    expect(platformFor('app-universal-release.apk')).toBe('android-universal');
+    expect(platformFor('app-arm64-v8a-release.apk')).toBe('android-aarch64');
+    expect(platformFor('notes.txt')).toBeNull();
   });
 
   it('arma Linux y Windows con firma y URL reales', () => {
@@ -54,11 +57,11 @@ describe('latest-json', () => {
     expect(json.notes).toBe('Notas');
     expect(json.pub_date).toBe('2026-10-27T00:00:00.000Z');
     expect(json.platforms['linux-x86_64']).toEqual({
-      signature: 'firma-linux',
+      signature: b64('firma-linux'),
       url: 'https://github.com/wulflo/store-inventory/releases/download/v1.2.3/app_1.2.3_amd64.AppImage.tar.gz',
     });
     expect(json.platforms['windows-x86_64']).toEqual({
-      signature: 'firma-windows',
+      signature: b64('firma-windows'),
       url: 'https://github.com/wulflo/store-inventory/releases/download/v1.2.3/app_1.2.3_x64-setup.nsis.zip',
     });
   });
@@ -79,11 +82,11 @@ describe('latest-json', () => {
     });
 
     expect(json.platforms['linux-x86_64']).toEqual({
-      signature: 'firma-appimage',
+      signature: b64('firma-appimage'),
       url: 'https://github.com/owner/repo/releases/download/v2.0.0/app_2.0.0_amd64.AppImage',
     });
     expect(json.platforms['windows-x86_64']).toEqual({
-      signature: 'firma-exe',
+      signature: b64('firma-exe'),
       url: 'https://github.com/owner/repo/releases/download/v2.0.0/app_2.0.0_x64-setup.exe',
     });
   });
@@ -124,7 +127,7 @@ describe('latest-json', () => {
       artifactsDir: dir,
     });
 
-    expect(json.platforms['linux-x86_64'].signature).toBe('directo');
+    expect(json.platforms['linux-x86_64'].signature).toBe(b64('directo'));
     expect(json.platforms['linux-x86_64'].url).toMatch(/\.AppImage$/);
   });
 
@@ -142,7 +145,26 @@ describe('latest-json', () => {
       artifactsDir: dir,
     });
 
-    expect(json.platforms['windows-x86_64'].signature).toBe('nsis');
+    expect(json.platforms['windows-x86_64'].signature).toBe(b64('nsis'));
+  });
+
+  it('incluye el APK universal de Android', () => {
+    const dir = makeArtifacts({
+      'app-universal-release.apk': 'apk',
+      'app-universal-release.apk.sig': 'firma-apk',
+    });
+
+    const json = buildLatestJson({
+      version: '0.1.3',
+      tag: 'v0.1.3',
+      repo: 'owner/repo',
+      artifactsDir: dir,
+    });
+
+    expect(json.platforms['android-universal']).toEqual({
+      signature: b64('firma-apk'),
+      url: 'https://github.com/owner/repo/releases/download/v0.1.3/app-universal-release.apk',
+    });
   });
 
   it('falla si no hay firmas', () => {

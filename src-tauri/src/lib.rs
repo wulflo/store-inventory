@@ -2,14 +2,23 @@
 
 mod event_store;
 mod sync;
+mod updater;
 #[cfg(target_os = "android")]
 mod android_fs;
 
-use event_store::{store_append, store_default_root, store_device_id, store_ensure_layout, store_mtimes, store_read, AppendArgs, DeviceIdArgs, MtimesArgs, ReadArgs};
-use sync::identity::{identity_dir, Identity};
-use sync::peer::{Peer, PeersStore};
+use event_store::{
+  store_append, store_device_id, store_ensure_layout, store_mtimes, store_read, AppendArgs,
+  DeviceIdArgs, MtimesArgs, ReadArgs,
+};
+use serde::Serialize;
+use sync::manager::{IdentityInfo, SyncBatchResult, SyncLocalInfo, SyncManager};
+use sync::pairing::PendingPairing;
+use sync::peer::Peer;
 use tauri::{AppHandle, Manager};
-use std::sync::{Arc, Mutex};
+
+/* ------------------------------------------------------------------ */
+/* Almacenamiento                                                     */
+/* ------------------------------------------------------------------ */
 
 #[tauri::command]
 fn get_app_data_dir(app: AppHandle) -> Result<String, String> {
@@ -18,115 +27,201 @@ fn get_app_data_dir(app: AppHandle) -> Result<String, String> {
   Ok(dir.to_string_lossy().to_string())
 }
 
-/* ------------------------------------------------------------------ */
-/* Comandos de sincronización P2P                                      */
-/* ------------------------------------------------------------------ */
-
+/**
+ * Carpeta de datos por defecto.
+ *
+ * En escritorio conservamos el layout histórico (~/.local/share/...). En
+ * Android usamos el almacenamiento privado de la app: el SAF/MediaStore se
+ * reserva para exportaciones y para guardar el APK del actualizador.
+ */
 #[tauri::command]
-fn sync_generate_identity(app: AppHandle, name: String) -> Result<String, String> {
-  let root = app.path().app_data_dir().map_err(|e| e.to_string())?;
-  let dir = identity_dir(&root.to_string_lossy());
-  std::fs::create_dir_all(&dir).map_err(|e| format!("No se pudo crear carpeta de identidad: {e}"))?;
-  if dir.join("identity.pem").exists() && dir.join("certificate.pem").exists() {
-    let ident = Identity::load(&dir, &name)?;
-    return Ok(ident.device_id);
-  }
-  let ident = Identity::generate(&name)?;
-  ident.persist(&dir)?;
-  Ok(ident.device_id)
-}
-
-#[tauri::command]
-fn sync_list_peers(app: AppHandle) -> Result<Vec<Peer>, String> {
-  let root = app.path().app_data_dir().map_err(|e| e.to_string())?;
-  let path = root.join("sync/peers.json");
-  let store = PeersStore::load(&path)?;
-  Ok(store.list().into_iter().cloned().collect())
-}
-
-#[tauri::command]
-fn sync_start(_app: AppHandle) -> Result<(), String> {
-  Ok(())
-}
-
-#[tauri::command]
-fn sync_stop(_app: AppHandle) -> Result<(), String> {
-  Ok(())
-}
-
-/* ------------------------------------------------------------------ */
-/* Comandos de actualización                                           */
-/* ------------------------------------------------------------------ */
-
-#[tauri::command]
-async fn cmd_updater_check(app: AppHandle) -> Result<String, String> {
+fn store_default_root(app: AppHandle) -> Result<String, String> {
   #[cfg(target_os = "android")]
   {
-    return Err("Las actualizaciones se gestionan desde la tienda de Android.".to_string());
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().to_string())
   }
   #[cfg(not(target_os = "android"))]
   {
-    use tauri_plugin_updater::UpdaterExt;
-
-    let updater = app
-      .updater()
-      .map_err(|e| format!("El updater no está disponible: {e}"))?;
-    match updater.check().await {
-      Ok(Some(update)) => Ok(format!(
-        "Hay una versión nueva: {} (tenés {}). {}",
-        update.version,
-        update.current_version,
-        update.body.as_deref().unwrap_or("")
-      )),
-      Ok(None) => Ok("Ya tenés la última versión.".to_string()),
-      Err(e) => Err(format!("No se pudo buscar actualizaciones: {e}")),
-    }
+    let _ = app;
+    event_store::default_root()
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Sincronización P2P                                                 */
+/* ------------------------------------------------------------------ */
+
+#[derive(Debug, Serialize)]
+struct PairingStart {
+  info: SyncLocalInfo,
+  expires_at: u64,
+}
+
+#[tauri::command]
+fn sync_get_identity(state: tauri::State<'_, SyncManager>, name: String) -> Result<IdentityInfo, String> {
+  let identity = state.ensure_identity(&name)?;
+  let fingerprint = identity.fingerprint();
+  Ok(IdentityInfo {
+    device_id: identity.device_id,
+    name: identity.name,
+    fingerprint,
+  })
+}
+
+#[tauri::command]
+fn sync_local_info(
+  state: tauri::State<'_, SyncManager>,
+  name: Option<String>,
+) -> Result<SyncLocalInfo, String> {
+  if let Some(name) = name {
+    state.ensure_identity(&name)?;
+  }
+  Ok(state.local_info())
+}
+
+#[tauri::command]
+async fn sync_start(
+  state: tauri::State<'_, SyncManager>,
+  name: String,
+) -> Result<SyncLocalInfo, String> {
+  state.start(&name).await
+}
+
+#[tauri::command]
+fn sync_stop(state: tauri::State<'_, SyncManager>) -> Result<(), String> {
+  state.stop();
+  Ok(())
+}
+
+#[tauri::command]
+fn sync_list_peers(state: tauri::State<'_, SyncManager>) -> Result<Vec<Peer>, String> {
+  Ok(state.list_peers())
+}
+
+#[tauri::command]
+async fn sync_pair_listen_start(
+  state: tauri::State<'_, SyncManager>,
+  name: String,
+) -> Result<PairingStart, String> {
+  let (info, expires_at) = state.start_pairing(&name).await?;
+  Ok(PairingStart { info, expires_at })
+}
+
+#[tauri::command]
+fn sync_pair_listen_stop(state: tauri::State<'_, SyncManager>) -> Result<(), String> {
+  state.stop_pairing();
+  Ok(())
+}
+
+#[tauri::command]
+fn sync_pair_pending(
+  state: tauri::State<'_, SyncManager>,
+) -> Result<Option<PendingPairing>, String> {
+  Ok(state.pending_pairing())
+}
+
+#[tauri::command]
+async fn sync_pair_connect(
+  state: tauri::State<'_, SyncManager>,
+  name: String,
+  address: String,
+) -> Result<PendingPairing, String> {
+  state.connect_pairing(&name, &address).await
+}
+
+#[tauri::command]
+fn sync_pair_confirm(
+  state: tauri::State<'_, SyncManager>,
+  device_id: String,
+) -> Result<Peer, String> {
+  state.confirm_pairing(&device_id)
+}
+
+#[tauri::command]
+fn sync_pair_cancel(state: tauri::State<'_, SyncManager>, device_id: String) -> Result<(), String> {
+  state.reject_pairing(&device_id);
+  Ok(())
+}
+
+#[tauri::command]
+async fn sync_now(
+  state: tauri::State<'_, SyncManager>,
+  device_id: Option<String>,
+  address: Option<String>,
+) -> Result<SyncBatchResult, String> {
+  match device_id {
+    Some(device_id) => {
+      let report = state
+        .sync_peer(&device_id, address.as_deref())
+        .await?;
+      Ok(SyncBatchResult {
+        reports: vec![report],
+        errors: Vec::new(),
+      })
+    }
+    None => state.sync_all().await,
+  }
+}
+
+#[tauri::command]
+fn sync_set_peer_address(
+  state: tauri::State<'_, SyncManager>,
+  device_id: String,
+  address: Option<String>,
+) -> Result<Peer, String> {
+  state.set_peer_address(&device_id, address.as_deref())
+}
+
+#[tauri::command]
+fn sync_remove_peer(state: tauri::State<'_, SyncManager>, device_id: String) -> Result<(), String> {
+  state.remove_peer(&device_id)
+}
+
+/* ------------------------------------------------------------------ */
+/* Aplicación                                                         */
 /* ------------------------------------------------------------------ */
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let builder = tauri::Builder::default();
+  let mut builder = tauri::Builder::default();
 
   #[cfg(not(target_os = "android"))]
-  let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+  {
+    builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+  }
 
   builder
+    .setup(|app| {
+      app.manage(SyncManager::new(app.handle().clone()));
+      Ok(())
+    })
     .invoke_handler(tauri::generate_handler![
+      get_app_data_dir,
       store_default_root,
       store_ensure_layout,
       store_append,
       store_read,
       store_mtimes,
       store_device_id,
-      sync_generate_identity,
-      sync_list_peers,
+      sync_get_identity,
+      sync_local_info,
       sync_start,
       sync_stop,
-      cmd_updater_check,
+      sync_list_peers,
+      sync_pair_listen_start,
+      sync_pair_listen_stop,
+      sync_pair_pending,
+      sync_pair_connect,
+      sync_pair_confirm,
+      sync_pair_cancel,
+      sync_now,
+      sync_set_peer_address,
+      sync_remove_peer,
+      updater::cmd_updater_check,
+      updater::cmd_updater_install,
     ])
     .run(tauri::generate_context!())
     .expect("error al ejecutar Inventario Tienda");
-}
-
-#[derive(Clone)]
-struct SyncState {
-    server: Arc<Mutex<crate::sync::server::SyncServer>>,
-    peers: Arc<Mutex<crate::sync::peer::PeersStore>>,
-    identity: Arc<Mutex<Option<crate::sync::identity::Identity>>>,
-}
-
-#[tauri::command]
-fn sync_start_real(state: tauri::State<'_, SyncState>) -> Result<(), String> {
-    let mut server = state.server.lock().unwrap();
-    server.start()
-}
-
-#[tauri::command]
-fn sync_stop_real(state: tauri::State<'_, SyncState>) -> Result<(), String> {
-    let mut server = state.server.lock().unwrap();
-    server.stop();
-    Ok(())
 }

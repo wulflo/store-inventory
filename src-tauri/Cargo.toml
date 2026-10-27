@@ -1,6 +1,6 @@
 [package]
 name = "inventario-tienda"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 
 [lib]
@@ -14,24 +14,35 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Sincronización P2P cifrada LAN (fase 2)
-rustls = "0.23"
-rustls-pki-types = "1.0"
+# Sincronización P2P cifrada LAN.
+# Usamos el proveedor `ring` de rustls de forma explícita para que la
+# verificación de certificados fijados (pinning) sea determinista y no dependa
+# de qué proveedor criptográfico haya instalado otro crate.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rustls-pki-types = "1"
 rcgen = "0.14"
 sha2 = "0.10"
 base64 = "0.22"
-tokio = { version = "1", features = ["net", "time", "macros", "rt-multi-thread", "sync"] }
-tokio-rustls = "0.26"
+tokio = { version = "1", features = ["net", "time", "macros", "rt-multi-thread", "sync", "io-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging"] }
 rand = "0.8"
-# Actualizaciones (fase 5). El plugin solo soporta Windows/Linux/macOS;
-# en Android se actualiza reinstalando el APK o desde la tienda.
+if-addrs = "0.13"
+# Actualizador multiplataforma: en escritorio usa tauri-plugin-updater; en
+# Android descarga el APK y lo guarda en Descargas.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+minisign-verify = "0.3"
+semver = "1"
+
+# Actualizaciones de escritorio (fase 5). El plugin oficial no soporta Android;
+# allí el actualizador se implementa en este mismo crate.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 tauri-plugin-updater = "2"
 
 [target.'cfg(target_os = "android")'.dependencies]
-# En Android se usará el almacenamiento privado de la app (context) y,
-# cuando se implemente el backend SAF, un plugin Kotlin/JNI.
-# Por ahora se compila sin dependencias extra de Android.
+# Puente JNI para guardar el APK descargado en la carpeta pública Descargas
+# usando MediaStore (Android 10+) o el directorio público legacy (Android 9).
+jni = "0.21"
+ndk-context = "0.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Las dependencias del sistema (webkit2gtk, libsoup, gtk3) se instalan
@@ -42,4 +53,3 @@ tauri-plugin-updater = "2"
 [profile.release]
 opt-level = 2
 debug = false
-hex = "0.4"

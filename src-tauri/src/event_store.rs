@@ -4,10 +4,20 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const EVENTS_SUBDIR: &str = "events";
 const DEVICE_ID_FILE: &str = "device_id";
+
+/**
+ * Serializa las escrituras de eventos dentro del proceso.
+ *
+ * El frontend y el motor de sincronización pueden hacer append casi al mismo
+ * tiempo. Sin este lock, dos `writeln!` podrían intercalar bytes y corromper
+ * una línea JSONL.
+ */
+pub(crate) static EVENTS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppendArgs {
@@ -36,11 +46,11 @@ pub struct DeviceIdArgs {
 /* Rutas                                                              */
 /* ------------------------------------------------------------------ */
 
-fn events_dir(root: &str) -> PathBuf {
+pub(crate) fn events_dir(root: &str) -> PathBuf {
   Path::new(root).join(EVENTS_SUBDIR)
 }
 
-fn domain_path(root: &str, domain: &str) -> PathBuf {
+pub(crate) fn domain_path(root: &str, domain: &str) -> PathBuf {
   events_dir(root).join(format!("{}.jsonl", domain))
 }
 
@@ -70,13 +80,6 @@ pub fn default_root() -> Result<String, String> {
 /* Comandos                                                           */
 /* ------------------------------------------------------------------ */
 
-/** Ruta por defecto para los datos de la app. */
-#[cfg(not(target_os = "android"))]
-#[tauri::command]
-pub fn store_default_root() -> Result<String, String> {
-  default_root()
-}
-
 /** Crea el layout de carpetas (events/<dominio>.jsonl). Idempotente. */
 #[tauri::command]
 pub fn store_ensure_layout(root: String) -> Result<(), String> {
@@ -95,6 +98,7 @@ pub fn store_append(args: AppendArgs) -> Result<(), String> {
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent).map_err(|e| format!("No se pudo crear la carpeta de eventos: {e}"))?;
   }
+  let _guard = EVENTS_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   let mut file = fs::OpenOptions::new()
     .create(true)
     .append(true)

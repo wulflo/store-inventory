@@ -66,6 +66,10 @@ impl Identity {
       .map_err(|e| format!("No se pudo escribir la clave privada: {e}"))?;
     fs::write(dir.join("certificate.pem"), self.cert_pem())
       .map_err(|e| format!("No se pudo escribir el certificado: {e}"))?;
+    if !self.name.trim().is_empty() {
+      fs::write(dir.join("name.txt"), format!("{}\n", self.name.trim()))
+        .map_err(|e| format!("No se pudo escribir el nombre del dispositivo: {e}"))?;
+    }
     Ok(())
   }
 
@@ -85,13 +89,22 @@ impl Identity {
       .as_ref()
       .to_vec();
     let device_id = device_id_from_cert(&cert_der);
+    let stored_name = fs::read_to_string(dir.join("name.txt"))
+      .ok()
+      .map(|value| value.trim().to_string())
+      .filter(|value| !value.is_empty());
+    let name = if name.trim().is_empty() {
+      stored_name.unwrap_or_default()
+    } else {
+      name.trim().to_string()
+    };
 
     Ok(Self {
       key_pair_pem,
       cert_pem,
       cert_der,
       device_id,
-      name: name.to_string(),
+      name,
     })
   }
 
@@ -138,6 +151,45 @@ pub fn sas_code(local_fp: &[u8], remote_fp: &[u8], transcript: &[u8]) -> u32 {
   u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) % 1_000_000
 }
 
+/**
+ * SAS canónico: ambos extremos deben obtener exactamente el mismo número.
+ *
+ * Ordenamos los dos certificados antes de hashear. Un atacante en el medio
+ * presenta certificados distintos a cada lado, por lo que cada dispositivo
+ * calcula un par distinto y los códigos mostrados no coinciden. Los usuarios
+ * comparan el código en pantalla antes de confiar.
+ */
+pub fn sas_code_canonical(cert_a_der: &[u8], cert_b_der: &[u8], transcript: &[u8]) -> String {
+  let (first, second) = if cert_a_der <= cert_b_der {
+    (cert_a_der, cert_b_der)
+  } else {
+    (cert_b_der, cert_a_der)
+  };
+  let mut hasher = Sha256::new();
+  hasher.update(b"inventario-tienda/sas/v1");
+  hasher.update((first.len() as u64).to_be_bytes());
+  hasher.update(first);
+  hasher.update((second.len() as u64).to_be_bytes());
+  hasher.update(second);
+  hasher.update(transcript);
+  let digest = hasher.finalize();
+  let code = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) % 1_000_000;
+  format!("{code:06}")
+}
+
+/** Convierte un certificado DER a PEM (necesario para persistir el pin del peer). */
+pub fn cert_der_to_pem(cert_der: &[u8]) -> String {
+  use base64::{engine::general_purpose::STANDARD, Engine};
+  let b64 = STANDARD.encode(cert_der);
+  let mut out = String::from("-----BEGIN CERTIFICATE-----\n");
+  for chunk in b64.as_bytes().chunks(64) {
+    out.push_str(std::str::from_utf8(chunk).unwrap_or_default());
+    out.push('\n');
+  }
+  out.push_str("-----END CERTIFICATE-----\n");
+  out
+}
+
 /** Directorio de identidad por defecto (almacenamiento privado de la app). */
 pub fn identity_dir(root: &str) -> PathBuf {
   Path::new(root).join("identity")
@@ -177,5 +229,34 @@ mod tests {
     let code_b = sas_code(&a.cert_der, &b.cert_der, b"transcript");
     assert_eq!(code_a, code_b);
     assert!(code_a < 1_000_000);
+  }
+
+  #[test]
+  fn canonical_sas_is_order_independent() {
+    let a = Identity::generate("a").unwrap();
+    let b = Identity::generate("b").unwrap();
+    let ab = sas_code_canonical(&a.cert_der, &b.cert_der, b"pairing");
+    let ba = sas_code_canonical(&b.cert_der, &a.cert_der, b"pairing");
+    assert_eq!(ab, ba);
+    assert_eq!(ab.len(), 6);
+  }
+
+  #[test]
+  fn persists_device_name() {
+    let dir = std::env::temp_dir().join(format!("inventario-name-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let ident = Identity::generate("Celular de Alonso").unwrap();
+    ident.persist(&dir).unwrap();
+    let loaded = Identity::load(&dir, "").unwrap();
+    assert_eq!(loaded.name, "Celular de Alonso");
+    let _ = fs::remove_dir_all(&dir);
+  }
+
+  #[test]
+  fn cert_pem_roundtrip() {
+    let a = Identity::generate("a").unwrap();
+    let pem = cert_der_to_pem(&a.cert_der);
+    let parsed = CertificateDer::from_pem_slice(pem.as_bytes()).unwrap();
+    assert_eq!(parsed.as_ref(), a.cert_der.as_slice());
   }
 }
