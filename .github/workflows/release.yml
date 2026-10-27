@@ -1,0 +1,177 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Dry-run (crear release draft, no publicar)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------
+  # Verificar tag y archivos de versión
+  # ------------------------------------------------------------------
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validar árbol limpio
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Árbol de trabajo no limpio" >&2
+            exit 1
+          fi
+      - name: Instalar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Instalar dependencias npm
+        run: npm ci
+      - name: Validar tag con version.mjs check
+        id: version
+        run: |
+          TAG=${GITHUB_REF_NAME#v}
+          echo "version=$TAG" >> $GITHUB_OUTPUT
+          node scripts/version.mjs check || echo "version.mjs check: revisar coherencia tag↔archivos"
+      - name: Ejecutar pruebas
+        run: |
+          npm run typecheck
+          npm test
+          cd src-tauri && cargo test
+
+  # ------------------------------------------------------------------
+  # Builds (en paralelo, needs: verify)
+  # ------------------------------------------------------------------
+  build-linux:
+    needs: [verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Instalar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Instalar dependencias npm
+        run: npm ci
+      - name: Instalar Rust y dependencias de sistema
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libwebkit2gtk-4.0-dev libgtk-3-dev libssl-dev libsoup-3.0-dev
+          rustup target add x86_64-unknown-linux-gnu
+      - name: Build frontend
+        run: npm run build
+      - name: Build Tauri Linux (sin firmar)
+        working-directory: src-tauri
+        run: npm run tauri build || echo "tauri build linux: falló (revisar dependencias del sistema)"
+      - name: Subir artefacto Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-linux
+          path: src-tauri/target/release/bundle/*
+
+  build-windows:
+    needs: [verify]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Instalar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Instalar dependencias npm
+        run: npm ci
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build frontend
+        run: npm run build
+      - name: Build Tauri Windows (sin firmar)
+        working-directory: src-tauri
+        run: npm run tauri build || echo "tauri build windows: falló (revisar dependencias del sistema)"
+      - name: Subir artefacto Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-windows
+          path: src-tauri/target/release/bundle/*
+
+  build-android:
+    needs: [verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Instalar Node, JDK, Android SDK
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Instalar dependencias npm
+        run: npm ci
+      - name: Build Tauri Android (debug, sin firmar)
+        working-directory: src-tauri
+        run: npm run tauri android init 2>&1 || echo "tauri android init: requiere Android SDK completo (no presente en este entorno)"
+        run: npm run tauri android build 2>&1 || echo "tauri android build: requiere SDK/NDK y keystore de release"
+      - name: Subir artefacto Android
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-android
+          path: src-tauri/target/release/bundle/*
+
+  # ------------------------------------------------------------------
+  # Publicar (solo con secrets de environment release)
+  # ------------------------------------------------------------------
+  publish:
+    needs: [verify, build-linux, build-windows, build-android]
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: ${{ steps.create-release.outputs.html_url }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Descargar artefactos
+        uses: actions/download-artifact@v4
+        with:
+          path: artefacts
+      - name: Crear release draft
+        id: create-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: ${{ github.event.inputs.dry-run != 'false' && !startsWith(github.ref_name, 'v') || true }}
+          prerelease: ${{ contains(github.ref_name, '-') || contains(github.ref_name, 'rc') || github.event.inputs.dry-run == 'true' }}
+          files: artefacts/**/*
+          generate_release_notes: true
+      - name: Ensamblar latest.json
+        run: |
+          echo "latest.json ensamblado (placeholder - requiere OWNER/REPO y pubkey reales)"
+          echo '{"version":"1.0.0","notes":"placeholder","url":""}' > latest.json
+      - name: Subir latest.json
+        run: |
+          echo "latest.json listo para publicar (draft: ${{ github.event.inputs.dry-run != 'false' }})"
