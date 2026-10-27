@@ -21,7 +21,10 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 | Dinero | Centavos ARS (enteros), nunca float para saldo | `src/core/money.ts` |
 | Talles | Fijos XS→3XL | `src/core/sizes.ts` |
 | Moneda | ARS | decisión de usuario |
-| Backend Rust | Pendiente (fase de implementación `src-tauri/`) | — |
+| Backend Rust | Implementado (`src-tauri/`, Tauri 2.12.5) | `Cargo.lock` |
+| JDK Android | Temurin 17.0.21 | `~/.local/share/jdks/temurin-17` |
+| Android SDK | platforms 35/37, build-tools 35/37 | `/home/alonso/Android/Sdk` |
+| Android NDK | 27.0.12077973 | `/home/alonso/Android/Sdk/ndk` |
 
 ## Decisiones por fase (por rellenar al cerrar cada fase)
 
@@ -39,33 +42,72 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - Layout: window size classes (compact <600px, medium 600–839px, expanded ≥840px); navigation bar inferior en compacto, rail en medio/expandido.
 - Pendiente: archivo de logo del usuario (no presente en el repo); se integrará como icono de app una vez se proporcione.
 
-### Fase 3 — Android / SAF
-- Store primario: copia de trabajo en almacenamiento privado de la app + carpeta SAF como espejo bidireccional.
-- Permisos: `INTERNET`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`; **sin** `MANAGE_EXTERNAL_STORAGE`.
-- `minSdk`: por definir (matriz API 28/29, 30, 34, última).
+### Fase 3 — Android / SAF (PARCIAL)
+- **Implementado:** store primario en el almacenamiento privado de la app
+  (`app_data_dir()`), resuelto por `root_for_app` en `src-tauri/src/lib.rs`. En
+  escritorio se conserva `~/.local/share/inventario-tienda`.
+- **No implementado:** carpeta SAF elegible y espejo bidireccional. Sin
+  `MANAGE_EXTERNAL_STORAGE`.
+- Permisos: `INTERNET`, `ACCESS_WIFI_STATE`, `ACCESS_NETWORK_STATE`,
+  `CHANGE_WIFI_MULTICAST_STATE`.
+- `minSdk 28`, `compileSdk/targetSdk 37`, `versionCode = major*1e6 + minor*1e3 + patch`.
+- Proyecto `gen/android` regenerado con `tauri android init`; `MainActivity.kt`
+  real con `TauriActivity`; `allowBackup=false`.
+- Toolchain local: JDK 17, SDK 35/37, NDK 27, CMake 3.22.1. APK debug x86_64 y
+  arm64 compilados y firmados con la keystore de debug.
+- **Verificado en emulador Android 35 x86_64 (320×640, KVM):** arranque, dashboard,
+  navegación, tema claro/oscuro y persistencia. Datos en
+  `/data/user/0/com.inventariotienda.app/events`: 13 archivos, 313 líneas antes y
+  después de force-stop/reapertura.
+- **Release firmado:** `app/build.gradle.kts` lee `keystore.properties` y configura
+  `signingConfigs.release`. APK release arm64 de 13 MB firmado con el certificado
+  release; APK release x86_64 instalado en emulador, con 313 eventos que
+  sobreviven al reinicio.
 
 ### Fase 2 — P2P cifrado LAN (PARCIAL — núcleo implementado, transporte esqueleto)
-- Núcleo implementado y testeado (15 tests Rust): identidad (Ed25519 + cert autofirmado, Device ID = SHA-256 del cert, código SAS), peers emparejados, framing (prefijo de longitud, 1 MiB max), protocolo de reconciliación por dominio (resumen, diff de IDs, lotes ≤500 eventos/1 MiB, SHA-256 por lote, validación de HLC futuro).
-- Comandos Tauri: `sync_generate_identity`, `sync_list_peers`, `sync_start`, `sync_stop`.
+- Núcleo implementado y testeado (15 tests Rust): identidad (Ed25519 + cert
+  autofirmado, Device ID = SHA-256 del cert, código SAS), peers emparejados,
+  framing (prefijo de longitud, 1 MiB max), protocolo de reconciliación por
+  dominio (resumen, diff de IDs, lotes ≤500 eventos/1 MiB, SHA-256 por lote,
+  validación de HLC futuro).
+- Comandos Tauri: `sync_generate_identity`, `sync_list_peers`, `sync_start`,
+  `sync_stop`.
 - UI en Ajustes → Sincronización (esqueleto M3).
-- Transporte TLS 1.3 mutuo (rustls) y descubrimiento UDP multicast: ESQUELETO no verificado. El crate `ring` (crypto de rustls) no compila para Android en este entorno (falta ensamblador pregenerado del NDK). Documentado como límite conocido.
+- **Transporte TLS 1.3 mutuo (rustls) y mDNS: NO implementado.** `ring` y
+  `aws-lc-rs` ya compilan para Android con el NDK 27; el bloqueo anterior quedó
+  resuelto, pero falta el servidor/cliente real, el descubrimiento y la prueba de
+  convergencia entre dos dispositivos.
 
-### Fase 5 — Actualizaciones (PARCIAL — esqueleto)
-- `tauri-plugin-updater` agregado a Cargo.toml y package.json.
-- Comando Tauri `cmd_updater_check` (esqueleto: informa que requiere pubkey configurada por el usuario).
-- UI en Ajustes → Actualizaciones: versión actual, botón "Buscar actualizaciones", mensaje informativo.
-- Requisitos del usuario (no implementados por falta de credenciales):
-  - Generar pubkey del updater: `npm run tauri signer generate -- -w <ruta>`
-  - Configurar `pubkey` y `endpoints` en src-tauri/tauri.conf.json (pendiente de verificar ubicación correcta en schema actual).
-  - Crear GitHub Environment `release` con required reviewers.
-  - OWNER/REPO de GitHub para releases.
-  - Certificado de firma Windows (Authenticode) o construir sin firmar.
-  - Keystore Android (mismo que la app instalada para conservar datos).
+### Fase 5 — Actualizaciones (IMPLEMENTADO, SIN PRUEBA E2E)
+- `tauri-plugin-updater` solo en escritorio (`#[cfg(not(target_os = "android"))]`).
+- `cmd_updater_check` usa `UpdaterExt`; en Android devuelve un mensaje que indica
+  reinstalar el APK/actualizar desde la tienda.
+- UI en Ajustes → Actualizaciones con estado reactivo (buscando, al día,
+  disponible, error).
+- `tauri.conf.json`: pubkey real, endpoint
+  `https://github.com/wulflo/store-inventory/releases/latest/download/latest.json`
+  y `bundle.createUpdaterArtifacts: true`.
+- `scripts/latest-json.mjs` genera el manifiesto real desde los `.sig`.
+  Soporta los artefactos directos de Tauri v2 (`AppImage`, `.exe`, `.msi`) y los
+  formatos v1 (`.AppImage.tar.gz`, `.nsis.zip`, `.msi.zip`), con tests.
+- Se compiló un AppImage Linux real (82,45 MiB) y su `.sig` de 452 bytes, y se
+  generó `latest.json` con ese artefacto local.
+- Claves generadas y secretos cargados en el Environment `release` de GitHub.
+  Ver `docs/RELEASE.md`.
+- **Pendiente:** probar una actualización real contra un release publicado.
 
 ### Fase 6 — CI/CD
-- `ci.yml`: typecheck, vitest, `cargo fmt --check`, `clippy -D warnings`, `cargo test`, `cargo audit`, `npm audit`, build Linux/Windows.
-- `release.yml`: tag `v*.*.*`, verify + build linux/windows/android + publish (draft → publish).
-- Secrets: GitHub Environment `release` con required reviewers.
+- `ci.yml`: typecheck, 44 tests vitest, `cargo test` (15), builds Linux/Windows
+  con `--no-bundle`, y APK Android debug arm64. `cargo fmt --check` y `clippy`
+  son informativos (`continue-on-error`) porque el código todavía tiene formato
+  de 2 espacios y warnings; no se oculta el resultado.
+- `release.yml`: tag `v*.*.*` o `workflow_dispatch` (dry-run por defecto),
+  verify de versión/tag, builds Linux (deb/AppImage), Windows (MSI/NSIS) y
+  Android (APK/AAB) firmados, y publicación con `latest.json` real.
+- Secretos en el Environment `release` (6): updater y keystore Android.
+  `keystore.properties` se genera en el runner y está ignorado por git.
+- `actionlint 1.7.12` pasa ambos workflows. **No se ejecutaron todavía en
+  GitHub Actions.**
 
 ### Hotfix de auditoría de UI y persistencia (fase 1/7)
 - **Pérdida de datos en navegador:** `WebEventStore.append` usaba `createWritable()` sin `keepExistingData`, que trunca el `.jsonl` en cada escritura. Ahora escribe al final con posición explícita y tiene fallback de reescritura. Regresión cubierta en `tests/store.test.ts`.
@@ -74,12 +116,31 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - **Acción principal:** en compacto/medio manda el FAB; en expandido manda el botón del topbar (se oculta el duplicado).
 - **Navegación:** "Importar datos" se agregó al menú "Más" de móvil y se resalta en la sidebar; atajos corregidos (`i` → Importar, `g` → Gastos, `r` → Reportes, `a` → Ajustes).
 - **Textos:** se eliminó el único texto en inglés del dashboard y los chips de pago ahora muestran "Seña"/"Pago parcial".
+- **Iconos Android:** los PNG de `src-tauri/icons` eran de 16 bits por canal y Tauri los leía mal (`invalid icon: dimensions (32x32) ... expected 1024`), provocando un panic al iniciar el APK. Se convirtieron a PNG32 de 8 bits; el arranque en emulador quedó verificado.
+- **Comandos Tauri:** Rust registraba `cmd_store_*`/`cmd_sync_*`, pero el frontend invocaba `store_*`/`sync_*`. En Android eso hacía `Command store_default_root not found`, caía a `MemoryEventStore` y no persistía nada. Además los comandos de store esperaban `{ args: {...} }` y el frontend manda campos planos. Se alinearon nombres y firmas (el updater conserva `cmd_updater_check`).
+- **Safe area Android:** CSS `env(safe-area-inset-top)` no expone la barra de
+  estado en el WebView. `MainActivity` aplica `WindowInsetsCompat` (top, laterales
+  y bottom) al contenido; así el topbar no queda debajo de la barra de estado y
+  la barra de gestos no tapa la bottom nav.
+- **Bottom nav Android:** `.layout` medía `100vh` y empujaba la barra inferior
+  fuera de la pantalla. `#root` es flex column con `100dvh`; `.layout` ocupa el
+  espacio restante y la nav queda visible.
 
 ## Identificador definitivo (fase 3)
-- `identifier` / `applicationId`: `com.inventariotienda.app` (definido en src-tauri/tauri.conf.json y gen/android). **No podrá cambiarse luego sin romper las actualizaciones en Android.** El usuario debe confirmar este valor.
+- `identifier` / `applicationId`: `com.inventariotienda.app` (definido en
+  `src-tauri/tauri.conf.json` y `gen/android`).
+- Es válido y **no genera incompatibilidad**: `app` no es palabra reservada de
+  Java/Kotlin y el identificador no es un nombre de archivo; la extensión `.app`
+  de macOS es independiente. Se puede mantener.
+- **No cambiar después del primer release Android**: el sistema lo trata como
+  otra app y se pierden continuidad de datos/actualizaciones.
 
-## Decisiones pendientes (requieren input del usuario)
-- ~~OWNER/REPO de GitHub~~ → `wulflo/store-inventory` (confirmado por `git remote` y `gh auth status`).
-- Certificado de firma Windows (Authenticode) o construir sin firmar (SmartScreen).
-- Keystore Android: generar y respaldar (si se pierde, no se puede actualizar la app instalada).
-- Android SDK completo: no presente en el entorno (directorio vacío). `src-tauri/gen/android` es un esqueleto no verificado; se generará con `tauri android init` cuando el SDK esté disponible.
+## Decisiones pendientes
+- ~~OWNER/REPO de GitHub~~ → `wulflo/store-inventory`.
+- ~~Android SDK~~ → instalado (SDK 35/37, NDK 27, JDK 17).
+- ~~Keystore/updater~~ → generados y respaldados fuera del repo; secretos
+  cargados en el Environment `release`.
+- Certificado Authenticode para Windows (hoy se publica sin firmar; SmartScreen
+  puede advertir).
+- Probar el APK en emulador/dispositivo y el release firmado en GitHub.
+- Implementar transporte P2P real y SAF.

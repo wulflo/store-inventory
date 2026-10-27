@@ -68,14 +68,32 @@ Gestión local-first para emprendimiento de indumentaria (remeras y buzos). Stac
 
 ### Modo de uso
 - 100% local / offline, sin nube ni cuentas obligatorias.
-- Desarrollo: `npm run dev` (Vite en `http://127.0.0.1:1420`).
-- App nativa: `npm run app:dev` (Tauri) / `npm run app:build` (pendiente de `src-tauri/`).
-- Sincronización mediante agentes externos sobre una carpeta de datos (Syncthing / Google Drive).
-- Backup diario con rotación (pendiente de implementar en `src-tauri/`).
+- Desarrollo web: `npm run dev` (Vite en `http://127.0.0.1:1420`).
+- App nativa: `npm run app:dev` (Tauri) / `npm run app:build`.
+- Escritorio: datos en `~/.local/share/inventario-tienda` (Linux).
+- Android: datos en el almacenamiento privado de la app (`app_data_dir`).
+- Sincronización por agentes externos sobre una carpeta de datos
+  (Syncthing/Drive) o por el protocolo P2P propio (transporte en desarrollo).
+- Backup manual desde Ajustes; la rotación automática diaria aún no está.
+
+### Requisitos de desarrollo
+- Node 18+ y npm.
+- Rust estable y dependencias de Tauri (WebKitGTK 4.1 en Linux).
+- Android: JDK 17, Android SDK 35/37, NDK 27 y CMake.
 
 ## Limitaciones conocidas
-- `src-tauri/` aún no implementado: la app funciona en modo web (OPFS) pero no empaqueta como escritorio nativo ni móvil.
-- Sincronización P2P cifrada LAN: no implementada aún (fase pendiente).
-- Android / SAF: no implementado aún.
-- Actualizaciones automáticas: no implementadas aún.
-- CI/CD: no configurado aún.
+- **P2P:** el núcleo (identidad, peers, framing, reconciliación) está implementado
+  y testeado; el transporte TLS/mDNS y la convergencia LAN no.
+- **Android/SAF:** funciona con almacenamiento privado; no hay selector de
+  carpeta SAF ni espejo bidireccional.
+- **Android:** el APK arm64 compila; el APK x86_64 se probó en emulador API 35
+  (arranque, navegación, tema y persistencia). Falta probarlo en un dispositivo
+  físico y validar el APK arm64 en hardware real.
+- **Actualizaciones:** el updater de escritorio está configurado; falta probar
+  una actualización real publicada. En Android se actualiza reinstalando.
+- **Firma Windows:** sin certificado Authenticode (posible aviso de SmartScreen).
+- **CI/CD:** workflows escritos y validados con `actionlint`; no ejecutados aún
+  en GitHub Actions.
+- **Testing:** sin Playwright/E2E; la UI se verificó manualmente en navegador y
+  en emulador Android.
+- **Logo:** falta el archivo de logo definitivo.

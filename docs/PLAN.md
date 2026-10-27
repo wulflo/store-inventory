@@ -1,5 +1,10 @@
 # PLAN.md — Hoja de ruta (Fase 0: Auditoría)
 
+> **Actualización 2026-10-27:** este documento conserva la auditoría inicial.
+> Varias carencias ya se resolvieron (`src-tauri/`, íconos, capabilities,
+> Android SDK/NDK, updater, CI/CD). El estado real y honesto está en
+> `docs/QA_REPORT.md`; las decisiones vigentes, en `docs/DECISIONS.md`.
+
 ## Repositorio y rama
 - Rama de trabajo: `feat/material-p2p-release` (creada desde `main`, commit `0fbb9ff`)
 - Directorio: `/home/alonso/Documentos/Repositorios/inventario-tienda`
