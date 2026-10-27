@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
  *  permite reconstruir el certificado desde el KeyPair, y así el deviceId
  *  queda estable entre arranques.
  */
+#[derive(Clone)]
 pub struct Identity {
   pub key_pair_pem: String,
   pub cert_pem: String,

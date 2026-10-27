@@ -72,11 +72,13 @@ pub fn default_root() -> Result<String, String> {
 
 /** Ruta por defecto para los datos de la app. */
 #[cfg(not(target_os = "android"))]
+#[tauri::command]
 pub fn store_default_root() -> Result<String, String> {
   default_root()
 }
 
 /** Crea el layout de carpetas (events/<dominio>.jsonl). Idempotente. */
+#[tauri::command]
 pub fn store_ensure_layout(root: String) -> Result<(), String> {
   let dir = events_dir(&root);
   fs::create_dir_all(&dir).map_err(|e| format!("No se pudo crear la carpeta de datos: {e}"))?;
@@ -84,6 +86,7 @@ pub fn store_ensure_layout(root: String) -> Result<(), String> {
 }
 
 /** Agrega líneas al final de un archivo de dominio (append-only real). */
+#[tauri::command]
 pub fn store_append(args: AppendArgs) -> Result<(), String> {
   if args.lines.is_empty() {
     return Ok(());
@@ -107,6 +110,7 @@ pub fn store_append(args: AppendArgs) -> Result<(), String> {
 }
 
 /** Lee todo el contenido de un archivo de dominio. Devuelve cadena vacía si no existe. */
+#[tauri::command]
 pub fn store_read(args: ReadArgs) -> Result<String, String> {
   let path = domain_path(&args.root, &args.domain);
   match fs::read_to_string(&path) {
@@ -117,6 +121,7 @@ pub fn store_read(args: ReadArgs) -> Result<String, String> {
 }
 
 /** Devuelve los mtimes (ms epoch) de cada archivo de dominio, para detectar cambios externos (Syncthing/Drive). */
+#[tauri::command]
 pub fn store_mtimes(args: MtimesArgs) -> Result<Value, String> {
   let dir = events_dir(&args.root);
   let domains = [
@@ -139,6 +144,7 @@ pub fn store_mtimes(args: MtimesArgs) -> Result<Value, String> {
 }
 
 /** Lee o genera el identificador de dispositivo persistido junto a los datos. */
+#[tauri::command]
 pub fn store_device_id(args: DeviceIdArgs) -> Result<String, String> {
   let path = device_id_path(&args.root);
   if let Ok(existing) = fs::read_to_string(&path) {

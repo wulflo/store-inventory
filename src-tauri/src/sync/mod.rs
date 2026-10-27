@@ -1,7 +1,12 @@
 pub mod discovery;
 pub mod framing;
 pub mod identity;
+pub mod net;
+pub mod pair;
+pub mod pairing;
 pub mod peer;
 pub mod protocol;
 pub mod server;
 pub mod store_types;
+pub mod tls;
+pub mod client;

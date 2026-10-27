@@ -1,6 +1,6 @@
 [package]
 name = "inventario-tienda"
-version = "1.0.1"
+version = "0.1.2"
 edition = "2021"
 
 [lib]
@@ -42,3 +42,4 @@ tauri-plugin-updater = "2"
 [profile.release]
 opt-level = 2
 debug = false
+hex = "0.4"
