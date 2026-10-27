@@ -82,6 +82,9 @@ export function buildLatestJson({
     const artifact = updaterArtifact(name);
     if (!artifact) continue;
 
+    // GitHub reemplaza los espacios del nombre al subir el asset.
+    const assetName = name.replace(/ /g, '.');
+
     // Si hay varios formatos para la misma plataforma, nos quedamos con el de
     // mayor prioridad (NSIS sobre MSI; AppImage directo sobre .tar.gz).
     if (platforms[artifact.platform]?.rank >= artifact.rank) continue;
@@ -92,7 +95,7 @@ export function buildLatestJson({
     platforms[artifact.platform] = {
       rank: artifact.rank,
       signature,
-      url: `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(name)}`,
+      url: `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(assetName)}`,
     };
   }
 

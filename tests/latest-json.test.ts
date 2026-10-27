@@ -88,6 +88,28 @@ describe('latest-json', () => {
     });
   });
 
+  it('normaliza espacios como lo hace GitHub al subir assets', () => {
+    const dir = makeArtifacts({
+      'Mi App_1.0.0_amd64.AppImage': 'binario',
+      'Mi App_1.0.0_amd64.AppImage.sig': 'firma',
+      'Mi App_1.0.0_x64-setup.exe.sig': 'firma-win',
+    });
+
+    const json = buildLatestJson({
+      version: '1.0.0',
+      tag: 'v1.0.0',
+      repo: 'owner/repo',
+      artifactsDir: dir,
+    });
+
+    expect(json.platforms['linux-x86_64'].url).toBe(
+      'https://github.com/owner/repo/releases/download/v1.0.0/Mi.App_1.0.0_amd64.AppImage'
+    );
+    expect(json.platforms['windows-x86_64'].url).toBe(
+      'https://github.com/owner/repo/releases/download/v1.0.0/Mi.App_1.0.0_x64-setup.exe'
+    );
+  });
+
   it('prefiere el AppImage directo sobre el .tar.gz de v1Compatible', () => {
     const dir = makeArtifacts({
       'app_3.0.0_amd64.AppImage.sig': 'directo',
