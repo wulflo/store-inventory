@@ -165,7 +165,21 @@ gh run list --limit 5
 
 ---
 
-## 13. Bitácora de cambios
+## 13. Commits de esta sesión
+
+- [x] `c101123` — Alta de producto simplificada, edición, stock manual, reportes y tema aero.
+- [x] `50cf9e1` — Actualizaciones con fallback de descarga, QR con reintento LAN y diagnóstico de SAS.
+- [x] `3e1cb4f` — Release `v0.2.6` (versión y tag).
+- [x] `2a9b566` — Búsqueda de dispositivos por escaneo TCP cuando falla el descubrimiento UDP.
+- [x] `ccac80d` — Priorizar clientes frecuentes en el alta de pedidos.
+- [x] `dbc1d09` — Mensajes de firma genéricos para actualizaciones de escritorio.
+- [x] `1abfa7b` — Mostrar el ajuste aplicado al fijar stock manual.
+- [x] `e0235ec` — Documentación de producción y gastos.
+- [x] `18af15d` — Detector nativo de QR como respaldo del escáner.
+
+---
+
+## 14. Bitácora de cambios
 
 ### 2026-10-27
 - Creado este documento.
