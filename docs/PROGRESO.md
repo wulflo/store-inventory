@@ -64,8 +64,8 @@
 
 - [x] Pedidos con líneas, estados y entrega parcial ya existen.
 - [x] Pagos parciales/totales ya existen.
-- [ ] Simplificar el alta de pedido para clientes frecuentes.
-- [ ] Mostrar clientes frecuentes / últimos clientes en el alta.
+- [x] Simplificar el alta de pedido para clientes frecuentes: el buscador ordena por cantidad de pedidos.
+- [x] Mostrar clientes frecuentes en el alta: al abrir el buscador aparecen primero los clientes con más pedidos.
 - [ ] Mantener saldo y estado de pago visibles en el listado.
 
 ---

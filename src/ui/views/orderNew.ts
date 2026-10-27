@@ -33,6 +33,11 @@ export function newOrderView(app: App, shell: Shell): HTMLElement {
     placeholder: 'Buscar cliente por nombre o teléfono…',
     getItems: (q) => {
       const needle = q.toLowerCase();
+      const frequency = new Map<string, number>();
+      for (const order of app.state.orders.values()) {
+        if (order.deletedAt || order.status === 'cancelado') continue;
+        frequency.set(order.customerId, (frequency.get(order.customerId) ?? 0) + 1);
+      }
       return [...app.state.customers.values()]
         .filter((c) => !c.deletedAt)
         .filter(
@@ -41,6 +46,11 @@ export function newOrderView(app: App, shell: Shell): HTMLElement {
             (c.phone ?? '').includes(needle) ||
             (c.email ?? '').toLowerCase().includes(needle),
         )
+        .sort((a, b) => {
+          const byFrequency = (frequency.get(b.id) ?? 0) - (frequency.get(a.id) ?? 0);
+          if (byFrequency !== 0) return byFrequency;
+          return a.name.localeCompare(b.name);
+        })
         .slice(0, 8);
     },
     toItem: (c) => ({
