@@ -59,8 +59,11 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - `release.yml`: tag `v*.*.*`, verify + build linux/windows/android + publish (draft → publish).
 - Secrets: GitHub Environment `release` con required reviewers.
 
+## Identificador definitivo (fase 3)
+- `identifier` / `applicationId`: `com.inventariotienda.app` (definido en src-tauri/tauri.conf.json y gen/android). **No podrá cambiarse luego sin romper las actualizaciones en Android.** El usuario debe confirmar este valor.
+
 ## Decisiones pendientes (requieren input del usuario)
-- Identificador de la app (TAURI identifier / package ID Android): **definitivo, no cambiará luego**.
 - OWNER/REPO de GitHub para releases y updater.
 - Certificado de firma Windows (Authenticode) o construir sin firmar (SmartScreen).
 - Keystore Android: generar y respaldar (si se pierde, no se puede actualizar la app instalada).
+- Android SDK completo: no presente en el entorno (directorio vacío). `src-tauri/gen/android` es un esqueleto no verificado; se generará con `tauri android init` cuando el SDK esté disponible.
