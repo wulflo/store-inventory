@@ -2,6 +2,7 @@
 
 **Fecha de inicio de este registro:** 2026-10-27  
 **Versión publicada al iniciar:** `v0.2.5`  
+**Última versión publicada:** `v0.2.7`  
 **Rama:** `main`
 
 > Este documento es la fuente de verdad para retomar el trabajo si se pierde el acceso a internet.
@@ -24,6 +25,11 @@
 - [x] Commit `8998e75`: fixes de actualizaciones, datos vacíos, navegación Android y números grandes.
 - [x] Commit `cc5cda4`: fixes de cámara, emparejamiento y arranque de sync.
 - [x] Tag y release `v0.2.5` enviados a GitHub.
+- [x] **2026-10-27 — v0.2.6:** versión y tag creados, pero el workflow de Release fue cancelado antes de publicar. No existe release `v0.2.6`; `releases/latest` no la toma.
+- [x] **2026-10-27 — v0.2.7:** release publicado con APK, AAB, AppImage, `.deb`, EXE y MSI firmados, más `latest.json` apuntando a `0.2.7`.
+  - URL: https://github.com/wulflo/store-inventory/releases/tag/v0.2.7
+  - Workflow Release: `40597849000` — verificación, Linux, Windows, Android y publicación en verde.
+  - Commit del release: `dff087a` (`chore(release): v0.2.7`).
 
 ---
 
@@ -31,7 +37,7 @@
 
 - [x] **2026-10-27:** crear este archivo `docs/PROGRESO.md`.
 - [x] Mantenerlo actualizado al final de cada tanda de cambios.
-- [~] Registrar comando de release usado y resultado del workflow: `node scripts/version.mjs set X.Y.Z` + `git push origin main --tags`; falta anotar el resultado final de cada workflow.
+- [x] Registrar comando de release usado y resultado del workflow: `node scripts/version.mjs set X.Y.Z` + `git push origin main --tags`; `v0.2.7` terminó publicada correctamente.
 
 ---
 
@@ -176,7 +182,8 @@ gh run list --limit 5
 - [x] `1abfa7b` — Mostrar el ajuste aplicado al fijar stock manual.
 - [x] `e0235ec` — Documentación de producción y gastos.
 - [x] `18af15d` — Detector nativo de QR como respaldo del escáner.
-- [x] Script de versión ahora sincroniza también `src-tauri/gen/android/app/tauri.properties` (versionName/versionCode).
+- [x] `ed63a9b` — Script de versión sincroniza también `src-tauri/gen/android/app/tauri.properties` (versionName/versionCode).
+- [x] `dff087a` — Release `v0.2.7` (versión, `Cargo.lock`, tag y publicación).
 
 ---
 
@@ -204,3 +211,20 @@ gh run list --limit 5
 - El escáner de cámara usa `BarcodeDetector` nativo como respaldo de jsQR, para mejorar la lectura en Android.
 - Verificación: `npm run typecheck`, `npm test` (49), `npm run build`, `cargo test` (85) y `cargo check` pasan.
 - Pendiente: validar sync real entre desktop/Android, OCR de texto real y descarga de actualizaciones en cada dispositivo.
+
+### 2026-10-27 — publicación de `v0.2.7`
+- Cancelado el workflow de Release `v0.2.6` antes de publicar; no quedó release `v0.2.6`.
+- Versión subida a `0.2.7` en `package.json`, `Cargo.toml`, `Cargo.lock`, `tauri.conf.json`, `version.ts` y `tauri.properties` (`versionCode 2007`).
+- Tag `v0.2.7` creado sobre `dff087a` y enviado junto con `main`.
+- Workflow Release `40597849000` terminó en verde: verificación, build Linux, build Windows, build Android y publicación.
+- Release publicado: https://github.com/wulflo/store-inventory/releases/tag/v0.2.7
+- Assets publicados:
+  - `app-universal-release.apk` + `.sig`
+  - `app-universal-release.aab`
+  - `Inventario.Tienda_0.2.7_amd64.AppImage` + `.sig`
+  - `Inventario.Tienda_0.2.7_amd64.deb`
+  - `Inventario.Tienda_0.2.7_x64-setup.exe` + `.sig`
+  - `Inventario.Tienda_0.2.7_x64_en-US.msi` + `.sig`
+  - `latest.json`
+- `latest.json` publicado con `"version": "0.2.7"` y firmas reales para Android, Linux y Windows.
+- Siguiente paso: instalar `v0.2.7` en desktop y Android, y probar actualizaciones, QR, “Buscar en la red” y el SAS de 6 dígitos.
