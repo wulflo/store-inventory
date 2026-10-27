@@ -92,8 +92,8 @@ Gestión local-first para emprendimiento de indumentaria (remeras y buzos). Stac
 - **Actualizaciones:** el updater de escritorio está configurado; falta probar
   una actualización real publicada. En Android se actualiza reinstalando.
 - **Firma Windows:** sin certificado Authenticode (posible aviso de SmartScreen).
-- **CI/CD:** workflows escritos y validados con `actionlint`; no ejecutados aún
-  en GitHub Actions.
+- **CI/CD:** CI ejecutado en GitHub con los 4 jobs en verde (Linux, Windows,
+  Android). El workflow de release firmado todavía no se ejecutó.
 - **Testing:** sin Playwright/E2E; la UI se verificó manualmente en navegador y
   en emulador Android.
 - **Logo:** falta el archivo de logo definitivo.

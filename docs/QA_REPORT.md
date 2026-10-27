@@ -33,7 +33,7 @@ implementado**.
 | 15 | Sincronización P2P (núcleo) | ✅ Verificado | 15 tests Rust. |
 | 16 | Sincronización P2P (TLS 1.3 mutuo, mDNS, SAS en vivo, convergencia LAN) | ❌ No implementado | `discovery.rs`/`server.rs` son esqueleto. `ring`/`aws-lc-rs` ya compilan en Android, pero el transporte no está terminado ni probado con dos dispositivos. |
 | 17 | Actualizaciones desktop (updater) | ⚠️ Implementado sin verificar | Pubkey y endpoint reales configurados; `cmd_updater_check` usa `UpdaterExt`; UI reacciona. Se generó un AppImage real (82,45 MiB) + `.sig` de 452 bytes con la clave de firma. **No se probó una actualización real contra un release publicado.** En Android informa que se actualiza reinstalando. |
-| 18 | CI/CD (GitHub Actions) | ⚠️ Implementado sin verificar | `ci.yml` y `release.yml` reescritos; `actionlint 1.7.12` pasa sin errores. **No se ejecutaron en GitHub todavía.** |
+| 18 | CI/CD (GitHub Actions) | ✅ Verificado | Run [`40475650914`](https://github.com/wulflo/store-inventory/actions/runs/40475650914): `lint`, `build-linux`, `build-windows` y `build-android` en verde. Se reemplazó `android-actions/setup-android@v3` (su paquete `tools` ya no existe) por `sdkmanager` del SDK preinstalado. `actionlint` pasa. |
 | 19 | Android / SAF (carpeta elegible) | ❌ No implementado | Solo almacenamiento privado de la app. No hay selector SAF ni espejo bidireccional. |
 | 20 | Build nativo desktop (deb/AppImage/MSI/NSIS) | ⚠️ Parcial | AppImage Linux compilado y firmado localmente (82,45 MiB). MSI/NSIS requieren Windows y no se ejecutaron; deb no se generó en esta corrida. |
 | 21 | APK Android debug/release | ✅ Verificado en emulador | APK debug x86_64 y APK release x86_64 instalados y ejecutados en emulador Android 35 (320×640, KVM): arrancan, muestran dashboard, navegan y persisten. El APK arm64 debug/release se compila, pero no se ejecutó en hardware real. |
@@ -63,6 +63,16 @@ implementado**.
 
 ---
 
+## Capturas del APK release en emulador
+
+Datos de demostración, 320×640, Android 35:
+
+| Claro | Oscuro | Menú Más |
+|---|---|---|
+| ![Dashboard claro](qa/screenshots/android-release-dashboard.png) | ![Dashboard oscuro](qa/screenshots/android-release-dark.png) | ![Menú Más](qa/screenshots/android-release-more.png) |
+
+---
+
 ## Limitaciones conocidas
 
 1. **SAF / carpeta elegible:** en Android la app escribe en su almacenamiento
@@ -82,8 +92,9 @@ implementado**.
 6. **Windows:** MSI/NSIS sin certificado Authenticode; SmartScreen puede advertir.
 7. **Logo:** no hay archivo de logo definitivo en el repositorio; se usan los
    íconos generados por Tauri.
-8. **CI/CD:** los workflows están validados sintácticamente con `actionlint`,
-   pero no se ejecutaron en GitHub Actions.
+8. **CI/CD:** el run `40475650914` pasó completo en GitHub (Linux, Windows,
+   Android). El workflow de **release** (artefactos firmados y draft) todavía no
+   se ejecutó.
 9. **P2P en segundo plano:** Android puede suspender la sincronización por Doze;
    solo se plantea en primer plano.
 10. **Tamaño del APK debug:** ~268 MB por ABI por los símbolos de depuración; el
