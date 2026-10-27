@@ -247,10 +247,19 @@ async fn serve_authenticated(
     }
   }
 
+  let mut sent_bye = false;
   loop {
-    let frame = read_frame_async(stream)
-      .await
-      .map_err(|e| format!("Error leyendo del cliente: {e}"))?;
+    let frame = match tokio::time::timeout(std::time::Duration::from_secs(2), read_frame_async(stream)).await {
+      Ok(Ok(f)) => f,
+      Ok(Err(e)) => return Err(format!("Error leyendo del cliente: {e}")),
+      Err(_) => {
+        if !sent_bye {
+          let _ = write_json(stream, FrameType::Bye, &serde_json::json!({})).await;
+          sent_bye = true;
+        }
+        break;
+      }
+    };
     match frame.r#type {
       FrameType::IdList => {
         let list: IdListPayload = serde_json::from_slice(&frame.payload)
@@ -310,7 +319,13 @@ async fn serve_authenticated(
           domains.insert(payload.domain.clone());
         }
       }
-      FrameType::Bye => break,
+      FrameType::Bye => {
+        if !sent_bye {
+          let _ = write_json(stream, FrameType::Bye, &serde_json::json!({})).await;
+          sent_bye = true;
+        }
+        break;
+      }
       FrameType::KeepAlive | FrameType::BatchAck => {}
       FrameType::Error => {
         let msg = serde_json::from_slice::<crate::sync::wire::ErrorPayload>(&frame.payload)
@@ -324,7 +339,7 @@ async fn serve_authenticated(
       }
     }
   }
-  write_json(stream, FrameType::Bye, &serde_json::json!({})).await?;
+  let _ = write_json(stream, FrameType::Bye, &serde_json::json!({})).await;
 
   // Actualizamos last_seen del peer y persistimos (best-effort).
   {
