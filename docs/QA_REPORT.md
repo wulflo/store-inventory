@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-10-27
 **Rama:** `main` (merge `7bce770`; fixes `9fde4b8`, `f69a25c`, `21cbd59`)
-**Entorno local:** Linux, Node 18.19.1, npm 9.2.0, Rust/cargo 1.99.1, tauri-cli 2.12.4, Tauri 2.12.5
+**Entorno local:** Linux, Node 20.20.2 (vía `npx node@20`; el sistema tiene 18.19.1), npm 10.9.9, Rust/cargo 1.99.1, tauri-cli 2.12.4, Tauri 2.12.5
 **Android:** JDK Temurin 17.0.21, Android SDK 35/37, build-tools 35.0.0/37.0.0, NDK 27.0.12077973
 **WebKitGTK:** 4.1 (desktop)
 
@@ -17,14 +17,14 @@ implementado**.
 | # | Función / prueba | Resultado | Detalle |
 |---|------------------|-----------|---------|
 | 1 | `npm run typecheck` | ✅ Verificado | Sin errores de TypeScript. |
-| 2 | `npm test` (vitest) | ✅ Verificado | 45 tests: 16 core + 19 version-map + 2 store + 8 latest-json. |
+| 2 | `npm test` (vitest) | ✅ Verificado | 48 tests: 16 core + 19 version-map + 2 store + 8 latest-json + 3 tema/acento. Ejecutado con Node 20.20.2. |
 | 3 | `cargo check` desktop Linux | ✅ Verificado | Compila con updater activo; quedan warnings no bloqueantes. |
 | 4 | `cargo test` (sync) | ✅ Verificado | 15 tests: identidad, peers, framing y protocolo. |
 | 5 | `npm run dev` (Vite) | ✅ Verificado | `http://127.0.0.1:1420/` responde 200. |
 | 6 | Navegación por rutas UI | ✅ Verificado (manual) | 16 rutas renderizan sin errores de consola (incluye detalle de pedido/cliente y 404). |
 | 7 | Datos de seed | ✅ Verificado | 2 colecciones, 5 productos, 10 pedidos, producción y gastos; stock/reservas/márgenes derivados correctamente. |
 | 8 | Material Design 3 y layout adaptativo | ✅ Verificado (manual) | Recorrido visual en navegador 904×675 y en emulador Android 320×640: sidebar/topbar, grillas, tablas, modales, formularios y bottom nav. Sin Playwright que lo automatice. |
-| 9 | Tema claro/oscuro | ✅ Verificado (manual) | Ambos temas con contraste legible en navegador y en emulador Android; el cambio de tema se probó desde el topbar. |
+| 9 | Tema claro/oscuro y color de acento | ✅ Verificado (manual) | Ambos temas con contraste legible en navegador y en emulador Android. Se agregaron 6 acentos M3 y persistencia `Setting.Set`; se verificó el cambio en navegador, la recarga y la variante oscura. |
 | 10 | Persistencia OPFS (`WebEventStore.append`) | ✅ Verificado | 2 tests de regresión; tras recargar, los eventos del seed siguen en disco. Se corrigió el truncado del `.jsonl` en cada append. |
 | 11 | Auditoría de clases CSS | ✅ Verificado | ~145 clases relevadas; se restauraron ~40 faltantes. 0 faltantes. |
 | 12 | Backend Rust `store_*` (desktop) | ✅ Verificado | Comandos implementados y alineados con el frontend (`store_*`, argumentos planos); `cargo check`/`cargo test` pasan. |
@@ -33,7 +33,7 @@ implementado**.
 | 15 | Sincronización P2P (núcleo) | ✅ Verificado | 15 tests Rust. |
 | 16 | Sincronización P2P (TLS 1.3 mutuo, mDNS, SAS en vivo, convergencia LAN) | ❌ No implementado | `discovery.rs`/`server.rs` son esqueleto. `ring`/`aws-lc-rs` ya compilan en Android, pero el transporte no está terminado ni probado con dos dispositivos. |
 | 17 | Actualizaciones desktop (updater) | ⚠️ Implementado sin verificar | Pubkey y endpoint reales configurados; `cmd_updater_check` usa `UpdaterExt`; UI reacciona. El release dry-run generó AppImage 83.683.832 B + `.sig` 452 B, NSIS 3.622.879 B + `.sig` 448 B y MSI 5.488.640 B + `.sig` 448 B, y un `latest.json` real. **No se probó una actualización real contra un release publicado**: el draft `v1.0.0` todavía no alimenta `releases/latest`. En Android informa que se actualiza reinstalando. |
-| 18 | CI/CD (GitHub Actions) | ✅ Verificado | CI [`40484597887`](https://github.com/wulflo/store-inventory/actions/runs/40484597887) en `main`: typecheck, 45 tests, `cargo test` y builds Linux/Windows/Android en verde. Release dry-run [`40484612737`](https://github.com/wulflo/store-inventory/actions/runs/40484612737): `verify`, `build-linux`, `build-windows`, `build-android` y `publish` en verde. `actionlint` pasa. |
+| 18 | CI/CD (GitHub Actions) | ✅ Verificado | CI [`40484597887`](https://github.com/wulflo/store-inventory/actions/runs/40484597887) en `main`: typecheck, 45 tests, `cargo test` y builds Linux/Windows/Android en verde. Release dry-run [`40484612737`](https://github.com/wulflo/store-inventory/actions/runs/40484612737): `verify`, `build-linux`, `build-windows`, `build-android` y `publish` en verde. `actionlint` pasa. La actualización de dependencias y el acento requieren una corrida nueva de CI. |
 | 19 | Android / SAF (carpeta elegible) | ❌ No implementado | Solo almacenamiento privado de la app. No hay selector SAF ni espejo bidireccional. |
 | 20 | Build nativo desktop (deb/AppImage/MSI/NSIS) | ✅ Verificado (build y firma en CI) | Release dry-run `40484612737`: AppImage 83.683.832 B, `.deb` 5.231.942 B, MSI 5.488.640 B y NSIS 3.622.879 B, con firmas de updater para AppImage/EXE/MSI. No se ejecutaron los instaladores de escritorio en esta corrida; solo se verificó su construcción y firma. |
 | 21 | APK Android debug/release | ✅ Verificado en emulador | APK universal del CI (39.923.555 B, 4 ABIs: arm64-v8a, armeabi-v7a, x86, x86_64) instalado con `adb install -r` y ejecutado en emulador Android 35 (320×640, KVM); arranca, muestra dashboard, navega y conserva 315 eventos. El APK arm64 compila, pero no se ejecutó en hardware real. |
@@ -41,6 +41,7 @@ implementado**.
 | 23 | `latest.json` del updater | ✅ Verificado (release dry-run) | `scripts/latest-json.mjs` + 8 tests; generado desde artefactos reales del CI, con firmas que coinciden byte a byte con los `.sig` y URLs que usan los nombres reales con puntos (`Inventario.Tienda…`). Soporta AppImage/`.exe`/`.msi` directos de Tauri v2 y formatos v1; prefiere NSIS. El draft no está publicado: falta probar el updater contra `releases/latest`. |
 | 24 | Playwright / E2E automatizado | ❌ No implementado | No instalado; las capturas de `docs/qa/screenshots/` son manuales. |
 | 25 | `act` (GitHub Actions local) | ❌ No verificado | No instalado. `actionlint` sí se ejecutó. |
+| 26 | Badge de Pedidos | ✅ Verificado (manual) | El contador ahora usa la base `.badge` + `.badge-count`: `inline-flex`, `padding: 0 6px`, `border-radius` y `margin-left: auto`. Verificado en navegador a 904 px con un contador de prueba; la captura real queda pendiente de la próxima corrida con datos del seed. |
 
 ---
 

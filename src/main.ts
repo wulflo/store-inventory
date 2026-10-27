@@ -9,6 +9,7 @@ import { MemoryEventStore, WebEventStore } from './store/WebEventStore';
 import type { EventStore } from './store/EventStore';
 import { seedIfEmpty } from './seed/seed';
 import { uuid7 } from './core/ids';
+import { applyTheme } from './ui/theme';
 
 import { dashboardView } from './ui/views/dashboard';
 import { ordersView } from './ui/views/orders';
@@ -75,8 +76,11 @@ async function boot(): Promise<void> {
     console.error('seed falló', err);
   }
 
-  /* --- Tema --- */
-  applyTheme(app.getSetting('theme') ?? localStorage.getItem('theme') ?? 'light');
+  /* --- Tema y acento --- */
+  applyTheme(
+    app.getSettingJson<string>('theme', localStorage.getItem('theme') ?? 'light'),
+    app.getSettingJson<string>('accent', localStorage.getItem('accent') ?? 'blue'),
+  );
 
   /* --- Registro del dispositivo --- */
   if (!app.state.devices.has(deviceId)) {
@@ -126,12 +130,6 @@ function deviceName(): string {
   if (/Windows/i.test(ua)) return 'Windows';
   if (/Linux/i.test(ua)) return 'Linux';
   return 'Este equipo';
-}
-
-function applyTheme(theme: string): void {
-  const value = theme === 'dark' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = value;
-  localStorage.setItem('theme', value);
 }
 
 /* ------------------------------------------------------------------ */

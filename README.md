@@ -77,7 +77,7 @@ Gestión local-first para emprendimiento de indumentaria (remeras y buzos). Stac
 - Backup manual desde Ajustes; la rotación automática diaria aún no está.
 
 ### Requisitos de desarrollo
-- Node 18+ y npm.
+- Node 20+ y npm.
 - Rust estable y dependencias de Tauri (WebKitGTK 4.1 en Linux).
 - Android: JDK 17, Android SDK 35/37, NDK 27 y CMake.
 

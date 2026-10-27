@@ -63,8 +63,16 @@ jobs:
 
       - name: Dependencias de sistema para Tauri
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            install -y \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
@@ -108,8 +116,16 @@ jobs:
 
       - name: Dependencias de sistema para Tauri
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            install -y \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
@@ -268,9 +284,11 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: release
-      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ needs.verify.outputs.version }}
+      # En dry-run no existe el tag público: enlazar a Releases evita un 404.
+      url: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'true') && format('{0}/{1}/releases', github.server_url, github.repository) || format('{0}/{1}/releases/tag/v{2}', github.server_url, github.repository, needs.verify.outputs.version) }}
     permissions:
       contents: write
+      deployments: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -291,6 +309,34 @@ jobs:
             --artifacts artifacts \
             --out latest.json
 
+      - name: Crear/actualizar deployment (GitHub)
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry-run != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ needs.verify.outputs.version }}';
+            const tag = `v${version}`;
+            const { data: deployment } = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: tag,
+              task: 'release',
+              auto_merge: false,
+              required_contexts: [],
+              environment: 'release',
+              description: `Inventario Tienda ${tag}`,
+              transient_environment: false,
+              production_environment: true,
+            });
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.id,
+              state: 'in_progress',
+              environment: 'release',
+              description: 'Publicando artefactos y latest.json',
+            });
+
       - name: Publicar release
         id: create-release
         uses: softprops/action-gh-release@v2
@@ -304,3 +350,39 @@ jobs:
           files: |
             artifacts/**/*
             latest.json
+
+      - name: Marcar deployment como éxito
+        if: (github.event_name != 'workflow_dispatch' || github.event.inputs.dry-run != 'true') && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ needs.verify.outputs.version }}';
+            const tag = `v${version}`;
+            const { data: deployments } = await github.rest.repos.listDeployments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment: 'release',
+              ref: tag,
+              per_page: 5,
+            });
+            if (!deployments.length) return;
+            const deploymentId = deployments[0].id;
+            const state = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deploymentId,
+              state,
+              environment: 'release',
+              description: state === 'success' ? 'Release publicado' : 'Release fallido',
+              log_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Resumen del release
+        run: |
+          {
+            echo "### Release generado"
+            echo ""
+            echo "- URL: ${{ steps.create-release.outputs.url }}"
+            echo "- Dry-run: ${{ github.event.inputs.dry-run }}"
+          } >> "$GITHUB_STEP_SUMMARY"

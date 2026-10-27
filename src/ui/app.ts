@@ -3,6 +3,7 @@ import { Router } from './router';
 import { toast } from './components/toast';
 import type { App } from '../app/App';
 import { dashboard } from '../projection/queries';
+import { applyTheme } from './theme';
 
 export interface NavItem {
   path: string;
@@ -61,11 +62,12 @@ export function createShell(root: HTMLElement, app: App): Shell {
   themeBtn.addEventListener('click', () => {
     const current = document.documentElement.dataset.theme;
     const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem('theme', next);
-    applyThemeIcon();
+    applyTheme(next, document.documentElement.dataset.accent ?? 'blue');
     void app.setSetting('theme', next);
   });
+
+  // El selector de Ajustes y este botón comparten el mismo estado visual.
+  document.addEventListener('inventario:themechange', applyThemeIcon);
 
   const topbar = el(
     'header',
@@ -114,7 +116,7 @@ export function createShell(root: HTMLElement, app: App): Shell {
     const badge =
       item.path === '/pedidos'
         ? el('span', {
-            class: 'badge-count',
+            class: 'badge badge-count',
             dataset: { badge: 'orders' },
             text: '0',
             style: { display: 'none' },
@@ -181,13 +183,45 @@ export function createShell(root: HTMLElement, app: App): Shell {
       type: 'button',
       on: {
         click: () => {
-          const modal = document.createElement('div');
-          modal.className = 'modal-backdrop';
-          const sheet = el(
-            'div',
-            { class: 'modal' },
-            el('h3', { text: 'Más', style: { marginBottom: '16px' } }),
-            ...NAV_ITEMS.filter((i) => !i.primary).map((item) =>
+          const backdrop = document.createElement('div');
+          backdrop.className = 'drawer-backdrop';
+          const drawer = el(
+            'aside',
+            { class: 'drawer' },
+            el(
+              'div',
+              { class: 'drawer-head' },
+              el('h3', { text: 'Menú', style: { margin: '0' } }),
+              el(
+                'button',
+                {
+                  class: 'icon-btn',
+                  type: 'button',
+                  on: { click: () => backdrop.remove() },
+                },
+                icon('x', 20),
+              ),
+            ),
+            el(
+              'nav',
+              { class: 'drawer-nav' },
+              ...NAV_ITEMS.filter((i) => !i.primary).map((item) =>
+                el(
+                  'button',
+                  {
+                    class: 'nav-link',
+                    type: 'button',
+                    on: {
+                      click: () => {
+                        backdrop.remove();
+                        router.navigate(item.path);
+                      },
+                    },
+                  },
+                  icon(item.icon, 20),
+                  el('span', { text: item.label }),
+                ),
+              ),
               el(
                 'button',
                 {
@@ -195,41 +229,27 @@ export function createShell(root: HTMLElement, app: App): Shell {
                   type: 'button',
                   on: {
                     click: () => {
-                      modal.remove();
-                      router.navigate(item.path);
+                      backdrop.remove();
+                      router.navigate('/importar');
                     },
                   },
                 },
-                icon(item.icon, 20),
-                el('span', { text: item.label }),
+                icon('upload', 20),
+                el('span', { text: 'Importar datos' }),
               ),
             ),
-            el(
-              'button',
-              {
-                class: 'nav-link',
-                type: 'button',
-                on: {
-                  click: () => {
-                    modal.remove();
-                    router.navigate('/importar');
-                  },
-                },
-              },
-              icon('upload', 20),
-              el('span', { text: 'Importar datos' }),
-            ),
           );
-          modal.appendChild(sheet);
-          modal.addEventListener('click', (e) => {
-            if (e.target === modal) modal.remove();
+          backdrop.appendChild(drawer);
+          backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) backdrop.remove();
           });
-          document.body.appendChild(modal);
+          document.body.appendChild(backdrop);
+          requestAnimationFrame(() => backdrop.classList.add('open'));
         },
       },
     },
-    icon('settings', 22),
-    el('span', { text: 'Más' }),
+    icon('menu', 22),
+    el('span', { text: 'Menú' }),
   );
   bottomNav.appendChild(moreBtn);
 

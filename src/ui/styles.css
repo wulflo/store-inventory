@@ -101,9 +101,9 @@
 
   /* --- Formas M3 --- */
   --md-sys-shape-corner-full: 28px;
-  --md-sys-shape-corner-large: 24px;
-  --md-sys-shape-corner-medium: 16px;
-  --md-sys-shape-corner-small: 12px;
+  --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-small: 8px;
   --md-sys-shape-corner-none: 0;
 
   --radius-sm: var(--md-sys-shape-corner-small);
@@ -472,8 +472,11 @@ a {
   font-size: var(--fs-label-large);
   font-weight: 500;
   cursor: pointer;
-  transition: transform 0.05s ease, opacity 0.15s ease;
+  transition: transform 0.05s ease, opacity 0.15s ease, background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   line-height: 1;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
 }
 
 .btn:disabled {
@@ -515,6 +518,7 @@ a {
   padding: var(--space-2) var(--space-4);
   font-size: var(--fs-xs);
   border-radius: var(--radius-sm);
+  white-space: nowrap;
 }
 
 .icon-btn {
@@ -603,6 +607,46 @@ textarea {
   resize: vertical;
 }
 
+/* Selector de color de acento (Ajustes). */
+.accent-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding-top: var(--space-1);
+}
+.accent-swatch {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--border-strong);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.accent-swatch:hover {
+  transform: scale(1.06);
+}
+.accent-swatch[aria-pressed='true'] {
+  box-shadow: 0 0 0 3px var(--text), 0 0 0 5px var(--surface);
+}
+.accent-swatch:focus-visible {
+  outline: 3px solid var(--text);
+  outline-offset: 3px;
+}
+
+/* Botones de selección en Ajustes (tema/otros) */
+.row > .btn {
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.row > .btn[aria-pressed='true'] {
+  background: var(--primary);
+  color: var(--primary-contrast);
+  border-color: transparent;
+}
+
 /* ------------------------------------------------------------------
    7. Chips
    ------------------------------------------------------------------ */
@@ -648,17 +692,20 @@ textarea {
 .badge {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   min-width: 20px;
   height: 20px;
   padding: 0 6px;
   border-radius: var(--radius-pill);
   font-size: var(--fs-xs);
   font-weight: 600;
+  line-height: 1;
   background: var(--surface-2);
   color: var(--text-2);
   border: 1px solid var(--border);
 }
 .badge-count {
+  margin-left: auto;
   background: var(--danger);
   color: #ffffff;
   border: none;
@@ -870,6 +917,7 @@ table.data td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   color: var(--text);
+  min-width: 0;
 }
 table.data tr:last-child td {
   border-bottom: none;
@@ -877,6 +925,9 @@ table.data tr:last-child td {
 table.data td.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: calc(var(--fs-sm) - 1px);
+  letter-spacing: -0.01em;
 }
 
 .list {
@@ -1329,7 +1380,7 @@ table.data td.num {
   cursor: pointer;
   inset: 0;
   background: var(--border);
-  border-radius: 24px;
+  border-radius: var(--radius-lg);
   transition: 0.2s;
 }
 .switch-slider:before {
@@ -1480,6 +1531,57 @@ table.data td.num {
    19. Layout adaptativo por window size class
    ------------------------------------------------------------------ */
 
+/* Drawer lateral derecho para móvil */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 700;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.drawer-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.drawer {
+  width: min(86vw, 320px);
+  height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.25s ease;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.drawer-backdrop.open .drawer {
+  transform: translateX(0);
+}
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.drawer-nav {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+  gap: var(--space-1);
+  overflow-y: auto;
+}
+.drawer-nav .nav-link {
+  justify-content: flex-start;
+  width: 100%;
+}
+
 /* Compacto (<600px): sidebar oculto, bottom nav visible, FAB */
 @media (max-width: 599px) {
   .sidebar {
@@ -1495,6 +1597,7 @@ table.data td.num {
     bottom: calc(var(--space-6) + var(--bottomnav-h) / 2 + env(safe-area-inset-bottom));
   }
   .content {
+    padding: var(--space-3);
     padding-bottom: calc(var(--bottomnav-h) + var(--space-5));
   }
   .modal {
@@ -1512,6 +1615,14 @@ table.data td.num {
   }
   h1 {
     font-size: var(--fs-headline);
+  }
+  table.data th,
+  table.data td {
+    padding: var(--space-2);
+    font-size: calc(var(--fs-sm) - 1px);
+  }
+  table.data td.num {
+    font-size: calc(var(--fs-sm) - 2px);
   }
 }
 

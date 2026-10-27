@@ -1,3 +1,4 @@
+use rustls_pki_types::{pem::PemObject, CertificateDer};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,13 +13,13 @@ use std::path::{Path, PathBuf};
  *  el almacenamiento privado de la app; en Android, en el almacenamiento
  *  privado (fuera del SAF, excluido de backups).
  *
- *  Nota: rcgen 0.11 no expone `Clone` para KeyPair ni `Debug` para
- *  Certificate; Identity guarda la clave privada como PEM (String) para
- *  poder persistirla sin necesidad de clonar el KeyPair.
+ *  Identity guarda clave y certificado como PEM (String): rcgen 0.14 ya no
+ *  permite reconstruir el certificado desde el KeyPair, y así el deviceId
+ *  queda estable entre arranques.
  */
 pub struct Identity {
   pub key_pair_pem: String,
-  pub certificate: rcgen::Certificate,
+  pub cert_pem: String,
   pub cert_der: Vec<u8>,
   pub device_id: String,
   pub name: String,
@@ -27,22 +28,20 @@ pub struct Identity {
 impl Identity {
   /** Genera una nueva identidad autofirmada. */
   pub fn generate(name: &str) -> Result<Self, String> {
-    let mut params = rcgen::CertificateParams::default();
-    let key_pair = rcgen::KeyPair::generate(&rcgen::PKCS_ED25519)
+    let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
       .map_err(|e| format!("No se pudo generar el par de claves: {e}"))?;
     let key_pair_pem = key_pair.serialize_pem();
-    params.key_pair = Some(key_pair);
-    params.alg = &rcgen::PKCS_ED25519;
-    let certificate = rcgen::Certificate::from_params(params)
+    let params = rcgen::CertificateParams::default();
+    let certificate = params
+      .self_signed(&key_pair)
       .map_err(|e| format!("No se pudo crear el certificado: {e}"))?;
-    let cert_der = certificate
-      .serialize_der()
-      .map_err(|e| format!("No se pudo serializar el certificado: {e}"))?;
+    let cert_pem = certificate.pem();
+    let cert_der = certificate.der().to_vec();
     let device_id = device_id_from_cert(&cert_der);
 
     Ok(Self {
       key_pair_pem,
-      certificate,
+      cert_pem,
       cert_der,
       device_id,
       name: name.to_string(),
@@ -51,7 +50,7 @@ impl Identity {
 
   /** Serializa el certificado a PEM (para mostrar / compartir en emparejamiento). */
   pub fn cert_pem(&self) -> String {
-    self.certificate.serialize_pem().unwrap()
+    self.cert_pem.clone()
   }
 
   /** Serializa la clave privada a PEM (solo para respaldo local del dispositivo). */
@@ -75,22 +74,20 @@ impl Identity {
       .map_err(|e| format!("No se pudo leer la clave privada: {e}"))?;
     let cert_pem = fs::read_to_string(dir.join("certificate.pem"))
       .map_err(|e| format!("No se pudo leer el certificado: {e}"))?;
-    // rcgen 0.11 no expone Certificate::from_pem; se reconstruye a partir de los bytes DER.
-    let mut params = rcgen::CertificateParams::default();
-    let key_pair = rcgen::KeyPair::from_pem(&key_pair_pem)
+    // Validamos que la clave privada se pueda leer y que el PEM del
+    // certificado sea válido. Conservamos el DER original para que el
+    // deviceId y la huella no cambien entre arranques.
+    rcgen::KeyPair::from_pem(&key_pair_pem)
       .map_err(|e| format!("Clave privada inválida: {e}"))?;
-    params.key_pair = Some(key_pair);
-    params.alg = &rcgen::PKCS_ED25519;
-    let certificate = rcgen::Certificate::from_params(params)
-      .map_err(|e| format!("Certificado inválido: {e}"))?;
-    let cert_der = certificate
-      .serialize_der()
-      .map_err(|e| format!("No se pudo serializar el certificado: {e}"))?;
+    let cert_der = CertificateDer::from_pem_slice(cert_pem.as_bytes())
+      .map_err(|e| format!("Certificado inválido: {e}"))?
+      .as_ref()
+      .to_vec();
     let device_id = device_id_from_cert(&cert_der);
 
     Ok(Self {
       key_pair_pem,
-      certificate,
+      cert_pem,
       cert_der,
       device_id,
       name: name.to_string(),

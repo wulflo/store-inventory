@@ -7,6 +7,7 @@ import { showError, toastSuccess } from '../components/toast';
 import { confirmDialog, openModal } from '../components/modal';
 import { CURRENCIES } from '../../core/money';
 import { APP_VERSION } from '../../core/version';
+import { ACCENTS, applyTheme, normalizeAccent, normalizeTheme, type AccentId, type ThemeName } from '../theme';
 import { invoke } from '@tauri-apps/api/core';
 
 export function settingsView(app: App, shell: Shell): HTMLElement {
@@ -30,6 +31,13 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
   );
 
   /* ---------------- Preferencias ---------------- */
+  const currentTheme = normalizeTheme(document.documentElement.dataset.theme);
+  const currentAccent = normalizeAccent(
+    app.getSettingJson<string>('accent', localStorage.getItem('accent') ?? 'blue'),
+  );
+  const activeAccent = (): AccentId =>
+    normalizeAccent(document.documentElement.dataset.accent ?? currentAccent);
+
   const currencySelect = el(
     'select',
     {
@@ -48,10 +56,69 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
       el('option', {
         value: c.code,
         text: `${c.code} (${c.symbol})`,
-        selected: app.getSetting('currency') === c.code,
+        selected: app.getSettingJson<string>('currency', 'ARS') === c.code,
       }),
     ),
   );
+
+  const themeButtons = new Map<ThemeName, HTMLButtonElement>();
+  const syncThemeButtons = (theme: ThemeName): void => {
+    for (const [name, button] of themeButtons) {
+      button.setAttribute('aria-pressed', String(name === theme));
+    }
+  };
+  const chooseTheme = (theme: ThemeName): void => {
+    applyTheme(theme, activeAccent());
+    syncThemeButtons(theme);
+    void app.setSetting('theme', theme).catch(showError);
+  };
+
+  const themeRow = el('div', { class: 'row', style: { gap: '8px' } });
+  for (const [theme, label] of [
+    ['light', 'Claro'],
+    ['dark', 'Oscuro'],
+  ] as const) {
+    const button = el('button', {
+      class: 'btn btn-sm',
+      type: 'button',
+      text: label,
+      'aria-pressed': String(currentTheme === theme),
+      on: { click: () => chooseTheme(theme) },
+    });
+    themeButtons.set(theme, button);
+    themeRow.appendChild(button);
+  }
+
+  const accentButtons = new Map<AccentId, HTMLButtonElement>();
+  const syncAccentButtons = (accent: AccentId): void => {
+    for (const [id, button] of accentButtons) {
+      button.setAttribute('aria-pressed', String(id === accent));
+    }
+  };
+  const chooseAccent = (accent: AccentId): void => {
+    applyTheme(document.documentElement.dataset.theme ?? currentTheme, accent);
+    syncAccentButtons(accent);
+    void app.setSetting('accent', accent).catch(showError);
+  };
+
+  const accentGrid = el('div', {
+    class: 'accent-grid',
+    role: 'group',
+    'aria-label': 'Color de acento',
+  });
+  for (const accent of ACCENTS) {
+    const button = el('button', {
+      class: 'accent-swatch',
+      type: 'button',
+      title: accent.label,
+      'aria-label': `Color de acento ${accent.label}`,
+      'aria-pressed': String(currentAccent === accent.id),
+      style: { background: accent.light.primary },
+      on: { click: () => chooseAccent(accent.id) },
+    });
+    accentButtons.set(accent.id, button);
+    accentGrid.appendChild(button);
+  }
 
   view.appendChild(
     card({
@@ -60,38 +127,12 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
         'div',
         { class: 'form-row' },
         el('div', { class: 'field' }, el('label', { text: 'Moneda' }), currencySelect),
+        el('div', { class: 'field' }, el('label', { text: 'Tema' }), themeRow),
         el(
           'div',
-          { class: 'field' },
-          el('label', { text: 'Tema' }),
-          el(
-            'div',
-            { class: 'row', style: { gap: '8px' } },
-            el('button', {
-              class: 'btn btn-sm',
-              type: 'button',
-              text: 'Claro',
-              on: {
-                click: () => {
-                  document.documentElement.dataset.theme = 'light';
-                  localStorage.setItem('theme', 'light');
-                  void app.setSetting('theme', 'light');
-                },
-              },
-            }),
-            el('button', {
-              class: 'btn btn-sm',
-              type: 'button',
-              text: 'Oscuro',
-              on: {
-                click: () => {
-                  document.documentElement.dataset.theme = 'dark';
-                  localStorage.setItem('theme', 'dark');
-                  void app.setSetting('theme', 'dark');
-                },
-              },
-            }),
-          ),
+          { class: 'field', style: { gridColumn: '1 / -1' } },
+          el('label', { text: 'Color de acento' }),
+          accentGrid,
         ),
       ),
     }),
