@@ -9,6 +9,7 @@ use sync::identity::Identity;
 use sync::peer::PeersStore;
 use sync::server::SyncServer;
 
+
 /* ------------------------------------------------------------------ */
 /* Estado global de sincronización (único por proceso)                */
 /* ------------------------------------------------------------------ */
@@ -103,6 +104,17 @@ fn cmd_sync_stop() -> Result<(), String> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Comando de actualización (fase 5 - requiere pubkey configurada por   */
+/* el usuario; el plugin tauri-plugin-updater se activa al generar la   */
+/* clave con `tauri signer generate` y configurar tauri.conf.json)     */
+/* ------------------------------------------------------------------ */
+
+#[tauri::command]
+fn cmd_updater_check() -> Result<String, String> {
+  Ok("El updater requiere configuración: genera la clave con\n  npm run tauri signer generate -- -w <ruta>\ny configura pubkey y endpoint en src-tauri/tauri.conf.json (sección tauri.updater).".to_string())
+}
+
+/* ------------------------------------------------------------------ */
 
 fn main() {
   tauri::Builder::default()
@@ -117,6 +129,7 @@ fn main() {
       cmd_sync_list_peers,
       cmd_sync_start,
       cmd_sync_stop,
+      cmd_updater_check,
     ])
     .run(tauri::generate_context!());
 }

@@ -50,9 +50,17 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - UI en Ajustes → Sincronización (esqueleto M3).
 - Transporte TLS 1.3 mutuo (rustls) y descubrimiento UDP multicast: ESQUELETO no verificado. El crate `ring` (crypto de rustls) no compila para Android en este entorno (falta ensamblador pregenerado del NDK). Documentado como límite conocido.
 
-### Fase 5 — Actualizaciones
-- Desktop: `tauri-plugin-updater`, endpoint `latest.json` en GitHub Releases.
-- Android: consulta `api.github.com/repos/.../releases/latest`, descarga APK a Descargas, verifica SHA-256 y certificado de firma.
+### Fase 5 — Actualizaciones (PARCIAL — esqueleto)
+- `tauri-plugin-updater` agregado a Cargo.toml y package.json.
+- Comando Tauri `cmd_updater_check` (esqueleto: informa que requiere pubkey configurada por el usuario).
+- UI en Ajustes → Actualizaciones: versión actual, botón "Buscar actualizaciones", mensaje informativo.
+- Requisitos del usuario (no implementados por falta de credenciales):
+  - Generar pubkey del updater: `npm run tauri signer generate -- -w <ruta>`
+  - Configurar `pubkey` y `endpoints` en src-tauri/tauri.conf.json (pendiente de verificar ubicación correcta en schema actual).
+  - Crear GitHub Environment `release` con required reviewers.
+  - OWNER/REPO de GitHub para releases.
+  - Certificado de firma Windows (Authenticode) o construir sin firmar.
+  - Keystore Android (mismo que la app instalada para conservar datos).
 
 ### Fase 6 — CI/CD
 - `ci.yml`: typecheck, vitest, `cargo fmt --check`, `clippy -D warnings`, `cargo test`, `cargo audit`, `npm audit`, build Linux/Windows.

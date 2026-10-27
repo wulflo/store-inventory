@@ -353,6 +353,55 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
     }),
   );
 
+  /* ---------------- Actualizaciones (fase 5 - esqueleto) ---------------- */
+  let updateStatus = '';
+  async function checkUpdate(): Promise<void> {
+    try {
+      updateStatus = await invoke<string>('cmd_updater_check');
+      renderUpdate();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  function renderUpdate(): void {
+    // placeholder para actualizar reactivamente
+  }
+
+  view.appendChild(
+    card({
+      title: 'Actualizaciones',
+      content: el(
+        'div',
+        {},
+        el('div', { class: 'field', style: { marginBottom: '16px' } },
+          el('label', { text: 'Versión actual' }),
+          el('input', {
+            type: 'text',
+            value: APP_VERSION,
+            disabled: true,
+            style: { width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #c7c6cf', background: '#e7e9ec' },
+          }),
+        ),
+        el('div', { class: 'btn-group', style: { gap: '8px' } },
+          el('button', {
+            class: 'btn btn-sm',
+            type: 'button',
+            text: 'Buscar actualizaciones',
+            on: { click: () => void checkUpdate() },
+          }),
+        ),
+        updateStatus
+          ? el('div', { class: 'small mt-3', style: { marginTop: '8px' } }, el('span', { text: updateStatus }))
+          : null,
+        el('p', {
+          class: 'small muted mt-3',
+          text: 'Esqueleto de fase 5: requiere pubkey del updater generada por el usuario y configurada en src-tauri/tauri.conf.json.',
+        }),
+      ),
+    }),
+  );
+
   return view;
 }
 
