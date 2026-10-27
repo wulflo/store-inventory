@@ -168,13 +168,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Instalar Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Preparar Android SDK preinstalado
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          test -d "$SDK"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SDKMANAGER="$(find "$SDK/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort | tail -1)"
+          test -n "$SDKMANAGER"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
 
       - name: Instalar platform, build-tools y NDK
         run: |
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager --install \
+          "$SDKMANAGER" --install \
             "platforms;android-37.0" \
             "build-tools;37.0.0" \
             "ndk;27.0.12077973" \
