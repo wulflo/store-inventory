@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   # ------------------------------------------------------------------
-  # Verificar tag y archivos de versión
+  # Verificar versión, tests y coherencia del tag
   # ------------------------------------------------------------------
   verify:
     runs-on: ubuntu-latest
@@ -30,33 +30,60 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+
       - name: Validar árbol limpio
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             echo "Árbol de trabajo no limpio" >&2
             exit 1
           fi
+
       - name: Instalar Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+
       - name: Instalar dependencias npm
         run: npm ci
-      - name: Validar tag con version.mjs check
+
+      - name: Validar versión y tag
         id: version
         run: |
-          TAG=${GITHUB_REF_NAME#v}
-          echo "version=$TAG" >> $GITHUB_OUTPUT
-          node scripts/version.mjs check || echo "version.mjs check: revisar coherencia tag↔archivos"
-      - name: Ejecutar pruebas
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "${GITHUB_REF_NAME#v}" != "$VERSION" ]; then
+            echo "El tag $GITHUB_REF_NAME no coincide con package.json ($VERSION)" >&2
+            exit 1
+          fi
+          node scripts/version.mjs check
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Dependencias de sistema para Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            patchelf \
+            build-essential
+
+      - name: Typecheck y tests
         run: |
           npm run typecheck
           npm test
-          cd src-tauri && cargo test
+
+      - name: Tests Rust (sync)
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
   # ------------------------------------------------------------------
-  # Builds (en paralelo, needs: verify)
+  # Build Linux (deb + AppImage + firma updater)
   # ------------------------------------------------------------------
   build-linux:
     needs: [verify]
@@ -65,29 +92,52 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
       - name: Instalar Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+
       - name: Instalar dependencias npm
         run: npm ci
-      - name: Instalar Rust y dependencias de sistema
+
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Dependencias de sistema para Tauri
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y libwebkit2gtk-4.0-dev libgtk-3-dev libssl-dev libsoup-3.0-dev
-          rustup target add x86_64-unknown-linux-gnu
-      - name: Build frontend
-        run: npm run build
-      - name: Build Tauri Linux (sin firmar)
-        working-directory: src-tauri
-        run: npm run tauri build || echo "tauri build linux: falló (revisar dependencias del sistema)"
-      - name: Subir artefacto Linux
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            patchelf \
+            build-essential
+
+      - name: Build y firma (Linux)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run app:build -- --bundles deb,appimage
+
+      - name: Subir artefactos Linux
         uses: actions/upload-artifact@v4
         with:
-          name: tauri-linux
-          path: src-tauri/target/release/bundle/*
+          name: linux
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
+            src-tauri/target/release/bundle/appimage/*.sig
+          if-no-files-found: error
 
+  # ------------------------------------------------------------------
+  # Build Windows (MSI + NSIS + firma updater). Sin certificado Authenticode.
+  # ------------------------------------------------------------------
   build-windows:
     needs: [verify]
     runs-on: windows-latest
@@ -95,26 +145,41 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
       - name: Instalar Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+
       - name: Instalar dependencias npm
         run: npm ci
+
       - name: Instalar Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Build frontend
-        run: npm run build
-      - name: Build Tauri Windows (sin firmar)
-        working-directory: src-tauri
-        run: npm run tauri build || echo "tauri build windows: falló (revisar dependencias del sistema)"
-      - name: Subir artefacto Windows
+
+      - name: Build y firma (Windows)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run app:build -- --bundles msi,nsis
+
+      - name: Subir artefactos Windows
         uses: actions/upload-artifact@v4
         with:
-          name: tauri-windows
-          path: src-tauri/target/release/bundle/*
+          name: windows
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.msi.zip
+            src-tauri/target/release/bundle/msi/*.sig
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.nsis.zip
+            src-tauri/target/release/bundle/nsis/*.sig
+          if-no-files-found: error
 
+  # ------------------------------------------------------------------
+  # Build Android release firmado (APK + AAB)
+  # ------------------------------------------------------------------
   build-android:
     needs: [verify]
     runs-on: ubuntu-latest
@@ -122,56 +187,110 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Instalar Node, JDK, Android SDK
+
+      - name: Instalar Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+
       - name: Instalar dependencias npm
         run: npm ci
-      - name: Build Tauri Android (debug, sin firmar)
-        working-directory: src-tauri
-        run: npm run tauri android init 2>&1 || echo "tauri android init: requiere Android SDK completo (no presente en este entorno)"
-        run: npm run tauri android build 2>&1 || echo "tauri android build: requiere SDK/NDK y keystore de release"
-      - name: Subir artefacto Android
+
+      - name: Instalar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar platform, build-tools, NDK y CMake
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install \
+            "platforms;android-37.0" \
+            "build-tools;37.0.0" \
+            "ndk;27.0.12077973" \
+            "cmake;3.22.1" \
+            "platform-tools"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Instalar Rust y targets Android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Configurar firma Android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          cd src-tauri/gen/android
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=%s\n' \
+            "$ANDROID_KEYSTORE_PASSWORD" \
+            "$ANDROID_KEY_PASSWORD" \
+            "$ANDROID_KEY_ALIAS" \
+            "$RUNNER_TEMP/keystore.jks" > keystore.properties
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/keystore.jks"
+          chmod 600 keystore.properties "$RUNNER_TEMP/keystore.jks"
+
+      - name: Build APK y AAB firmados
+        run: npx tauri android build --apk --aab --target aarch64 armv7 i686 x86_64
+
+      - name: Subir artefactos Android
         uses: actions/upload-artifact@v4
         with:
-          name: tauri-android
-          path: src-tauri/target/release/bundle/*
+          name: android
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+          if-no-files-found: error
 
   # ------------------------------------------------------------------
-  # Publicar (solo con secrets de environment release)
+  # Publicar release + latest.json real (con firmas)
   # ------------------------------------------------------------------
   publish:
     needs: [verify, build-linux, build-windows, build-android]
     runs-on: ubuntu-latest
     environment:
       name: release
-      url: ${{ steps.create-release.outputs.html_url }}
+      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ needs.verify.outputs.version }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
       - name: Descargar artefactos
         uses: actions/download-artifact@v4
         with:
-          path: artefacts
-      - name: Crear release draft
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generar latest.json con firmas reales
+        run: |
+          node scripts/latest-json.mjs \
+            --version "${{ needs.verify.outputs.version }}" \
+            --tag "v${{ needs.verify.outputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --artifacts artifacts \
+            --out latest.json
+
+      - name: Publicar release
         id: create-release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          draft: ${{ github.event.inputs.dry-run != 'false' && !startsWith(github.ref_name, 'v') || true }}
-          prerelease: ${{ contains(github.ref_name, '-') || contains(github.ref_name, 'rc') || github.event.inputs.dry-run == 'true' }}
-          files: artefacts/**/*
+          tag_name: v${{ needs.verify.outputs.version }}
+          name: Inventario Tienda v${{ needs.verify.outputs.version }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'true' }}
+          prerelease: ${{ contains(needs.verify.outputs.version, '-') }}
           generate_release_notes: true
-      - name: Ensamblar latest.json
-        run: |
-          echo "latest.json ensamblado (placeholder - requiere OWNER/REPO y pubkey reales)"
-          echo '{"version":"1.0.0","notes":"placeholder","url":""}' > latest.json
-      - name: Subir latest.json
-        run: |
-          echo "latest.json listo para publicar (draft: ${{ github.event.inputs.dry-run != 'false' }})"
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/**/*
+            latest.json

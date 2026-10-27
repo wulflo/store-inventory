@@ -130,6 +130,23 @@ async function check() {
     }
   }
 
+  // Android exige un versionCode monotónico y distinto por release.
+  try {
+    const conf = await readJson(TAURI_CONF);
+    const expectedCode = mapVersion(ver).android.versionCode;
+    const actualCode = conf.bundle?.android?.versionCode;
+    if (actualCode !== expectedCode) {
+      console.error(
+        `Error: Android versionCode ${actualCode} ≠ ${expectedCode} para ${ver}. Ejecuta 'set ${ver}' para corregir.`
+      );
+      process.exit(1);
+    } else {
+      console.log(`OK: Android versionCode ${actualCode}`);
+    }
+  } catch {
+    // Sin tauri.conf.json no hay nada que validar.
+  }
+
   console.log('check: OK');
 }
 
@@ -199,10 +216,15 @@ async function set(newVerRaw) {
   }
 
   if (await fileExists(TAURI_CONF)) {
-    let conf = await readFile(TAURI_CONF, 'utf8');
-    conf = conf.replace(/"version"\s*:\s*"[^"]*"/, `"version": "${newVer}"`);
-    await writeFile(TAURI_CONF, conf, 'utf8');
-    console.log(`OK: ${TAURI_CONF} → ${newVer}`);
+    const conf = await readJson(TAURI_CONF);
+    conf.version = newVer;
+    if (conf.bundle?.android) {
+      conf.bundle.android.versionCode = mapped.android.versionCode;
+    }
+    await writeJson(TAURI_CONF, conf);
+    console.log(
+      `OK: ${TAURI_CONF} → ${newVer} (Android versionCode ${mapped.android.versionCode})`
+    );
   } else {
     await writeFile(
       TAURI_CONF,

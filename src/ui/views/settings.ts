@@ -353,19 +353,19 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
     }),
   );
 
-  /* ---------------- Actualizaciones (fase 5 - esqueleto) ---------------- */
-  let updateStatus = '';
+  /* ---------------- Actualizaciones (fase 5) ---------------- */
+  const updateStatusEl = el('div', { class: 'small mt-3 hidden' });
+
   async function checkUpdate(): Promise<void> {
+    updateStatusEl.classList.remove('hidden', 'strong');
+    updateStatusEl.textContent = 'Buscando actualizaciones…';
     try {
-      updateStatus = await invoke<string>('cmd_updater_check');
-      renderUpdate();
+      updateStatusEl.textContent = await invoke<string>('cmd_updater_check');
+      updateStatusEl.classList.add('strong');
     } catch (err) {
+      updateStatusEl.classList.add('hidden');
       showError(err);
     }
-  }
-
-  function renderUpdate(): void {
-    // placeholder para actualizar reactivamente
   }
 
   view.appendChild(
@@ -391,12 +391,10 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
             on: { click: () => void checkUpdate() },
           }),
         ),
-        updateStatus
-          ? el('div', { class: 'small mt-3', style: { marginTop: '8px' } }, el('span', { text: updateStatus }))
-          : null,
+        updateStatusEl,
         el('p', {
           class: 'small muted mt-3',
-          text: 'Esqueleto de fase 5: requiere pubkey del updater generada por el usuario y configurada en src-tauri/tauri.conf.json.',
+          text: 'Requiere conexión a internet. En escritorio descarga e instala la versión firmada; en Android se reinstala el APK o se usa la tienda.',
         }),
       ),
     }),

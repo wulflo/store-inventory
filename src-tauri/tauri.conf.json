@@ -25,7 +25,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "msi"],
+    "targets": ["deb", "appimage", "msi"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,6 +42,14 @@
     "android": {
       "minSdkVersion": 28,
       "versionCode": 1000000
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU3M0I4RDQ3N0IwODJEN0YKUldSL0xRaDdSNDA3NTZUZEhkMXJHL1JrV0l3czFIWkxHLzNPejJmaEpmY0Q1NWVmd2lxT1ZVd0YK",
+      "endpoints": [
+        "https://github.com/wulflo/store-inventory/releases/latest/download/latest.json"
+      ]
     }
   }
 }
