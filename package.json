@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
     "app:dev": "tauri dev",
-    "app:build": "tauri build"
+    "app:build": "tauri build",
+    "release": "node scripts/version.mjs",
+    "version:map": "node scripts/version-map.mjs --verify"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",

@@ -6,6 +6,7 @@ import { formatDateTime } from '../../core/dates';
 import { showError, toastSuccess } from '../components/toast';
 import { confirmDialog, openModal } from '../components/modal';
 import { CURRENCIES } from '../../core/money';
+import { APP_VERSION } from '../../core/version';
 
 export function settingsView(app: App, shell: Shell): HTMLElement {
   const view = el('div');
@@ -189,6 +190,26 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
               toastSuccess('Para un borrado total, borrá la carpeta de datos desde Ajustes del sistema.');
             },
           },
+        }),
+      ),
+    }),
+  );
+
+  /* ---------------- Acerca de ---------------- */
+  view.appendChild(
+    card({
+      title: 'Acerca de',
+      content: el(
+        'div',
+        {},
+        infoRow('Versión', APP_VERSION),
+        infoRow('Arquitectura', 'Event Sourcing (JSONL append-only)'),
+        infoRow('Stack', 'Tauri 2 + TypeScript vanilla + Vite'),
+        infoRow('Moneda', 'ARS (centavos)'),
+        infoRow('Talles', 'XS → 3XL (fijos)'),
+        el('p', {
+          class: 'small muted mt-4',
+          text: '100% local y offline. Tus datos viven en archivos .jsonl (append-only) dentro de una carpeta elegible, sin base SQL .db.',
         }),
       ),
     }),
