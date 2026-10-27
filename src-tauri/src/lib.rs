@@ -221,6 +221,7 @@ pub fn run() {
       sync_remove_peer,
       updater::cmd_updater_check,
       updater::cmd_updater_install,
+      store_space_info,
     ])
     .run(tauri::generate_context!())
     .expect("error al ejecutar Inventario Tienda");

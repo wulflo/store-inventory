@@ -1,14 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capacidades por defecto",
+  "description": "Default permissions",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-emit",
     "core:event:allow-unlisten",
-    "core:window:default"
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging"
   ]
 }
