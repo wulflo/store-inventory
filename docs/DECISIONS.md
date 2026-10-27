@@ -114,7 +114,8 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
   `keystore.properties` se genera en el runner y está ignorado por git.
 - `actionlint 1.7.12` pasa ambos workflows.
 - **CI real:** run `40475650914` con `lint`, `build-linux`, `build-windows` y
-  `build-android` en verde.
+  `build-android` en verde; run `40484597887` en `main` tras los fixes, también
+  verde.
 - **Android SDK en CI:** se dejó de usar `android-actions/setup-android@v3`
   porque intenta instalar el paquete `tools`, retirado del repositorio de Google.
   El workflow usa el SDK preinstalado del runner y `sdkmanager` directo.
