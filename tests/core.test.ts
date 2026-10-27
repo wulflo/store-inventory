@@ -219,8 +219,9 @@ describe('márgenes', () => {
     const order = app.state.orders.get(orderId)!;
     const totals = orderTotals(app.state, order);
 
-    expect(totals.subtotalCents).toBe(1_500_000);
-    expect(totals.profitCents).toBe(1_000_000);
+    expect(totals.totalCents).toBe(1_500_000);
+    expect(totals.costCents).toBe(500_000);
+    expect(totals.marginCents).toBe(1_000_000);
     expect(totals.marginPercent).toBeCloseTo(66.666, 2);
   });
 });

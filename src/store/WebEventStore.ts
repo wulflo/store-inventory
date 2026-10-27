@@ -43,11 +43,33 @@ export class WebEventStore implements EventStore {
   async append(domain: Domain, events: DomainEvent[]): Promise<void> {
     if (events.length === 0) return;
     const handle = await this.fileHandle(domain, true);
-    const existing = await (await handle.getFile()).text();
+    const file = await handle.getFile();
+    const existing = await file.text();
     const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-    const body = serializeEvents(events);
-    const writable = await handle.createWritable();
-    await writable.write(prefix + body + '\n');
+    const body = `${prefix}${serializeEvents(events)}\n`;
+
+    /* `createWritable()` trunca el archivo por defecto. Hay que pedir
+       `keepExistingData` y escribir al final; si no, cada append borraba
+       todo el historial (bug de pérdida de datos detectado en la auditoría). */
+    let writable: any;
+    let keepsData = true;
+    try {
+      writable = await handle.createWritable({ keepExistingData: true });
+    } catch {
+      keepsData = false;
+      writable = await handle.createWritable();
+    }
+
+    try {
+      if (keepsData) {
+        await writable.write({ type: 'write', position: file.size, data: body });
+      } else {
+        await writable.write(existing + body);
+      }
+    } catch {
+      // Implementaciones sin escritura posicional: reescribimos todo.
+      await writable.write(existing + body);
+    }
     await writable.close();
     this.emit(domain);
   }

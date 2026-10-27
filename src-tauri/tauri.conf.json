@@ -1,0 +1,55 @@
+{
+  "$schema": "https://apps.tauri.app/schema/tauri-v2_0.json",
+  "productName": "Inventario Tienda",
+  "version": "1.0.0",
+  "identifier": "com.inventariotienda.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Inventario Tienda",
+        "width": 1024,
+        "height": 768,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage", "msi"],
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": [],
+    "externalBin": [],
+    "copyright": "Copyright (c) 2026 Inventario Tienda",
+    "category": "Business",
+    "shortDescription": "Gestión local-first de inventario para indumentaria",
+    "longDescription": "App de gestión local-first para emprendimiento de indumentaria (remeras y buzos) con Event Sourcing JSONL, sin base SQL .db.",
+    "android": {
+      "minSdkVersion": 28,
+      "versionCode": 1000000
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU3M0I4RDQ3N0IwODJEN0YKUldSL0xRaDdSNDA3NTZUZEhkMXJHL1JrV0l3czFIWkxHLzNPejJmaEpmY0Q1NWVmd2lxT1ZVd0YK",
+      "endpoints": [
+        "https://github.com/wulflo/store-inventory/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

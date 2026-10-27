@@ -1,5 +1,13 @@
 import { el, icon, matches } from '../dom';
-import { card, emptyState, money, ORDER_STATUS_LABEL, paymentBadge, statusBadge } from './common';
+import {
+  card,
+  emptyState,
+  money,
+  ORDER_STATUS_LABEL,
+  PAYMENT_STATUS_LABEL,
+  paymentBadge,
+  statusBadge,
+} from './common';
 import type { Shell } from '../app';
 import type { App } from '../../app/App';
 import { activeOrders, orderTotals } from '../../projection/queries';
@@ -77,7 +85,7 @@ export function ordersView(app: App, shell: Shell): HTMLElement {
             },
           },
         },
-        s === 'todos' ? 'Todos los pagos' : s.replace('_', ' '),
+        s === 'todos' ? 'Todos los pagos' : PAYMENT_STATUS_LABEL[s],
       ),
     ),
   );

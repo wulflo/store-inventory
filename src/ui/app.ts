@@ -77,7 +77,7 @@ export function createShell(root: HTMLElement, app: App): Shell {
       el(
         'button',
         {
-          class: 'btn btn-primary btn-sm',
+          class: 'btn btn-primary btn-sm topbar-new',
           type: 'button',
           on: {
             click: () => {
@@ -139,21 +139,21 @@ export function createShell(root: HTMLElement, app: App): Shell {
   }
 
   sidebar.appendChild(el('div', { style: { flex: '1' } }));
-  sidebar.appendChild(
-    el(
-      'button',
-      {
-        class: 'nav-link',
-        type: 'button',
-        dataset: { path: '/importar' },
-        on: {
-          click: () => router.navigate('/importar'),
-        },
+  const importBtn = el(
+    'button',
+    {
+      class: 'nav-link',
+      type: 'button',
+      dataset: { path: '/importar' },
+      on: {
+        click: () => router.navigate('/importar'),
       },
-      icon('upload', 20),
-      el('span', { text: 'Importar datos' }),
-    ),
+    },
+    icon('upload', 20),
+    el('span', { text: 'Importar datos' }),
   );
+  navButtons.set('/importar', importBtn);
+  sidebar.appendChild(importBtn);
 
   // ---- Bottom nav (mobile) ----
   const bottomButtons = new Map<string, HTMLElement>();
@@ -204,6 +204,21 @@ export function createShell(root: HTMLElement, app: App): Shell {
                 el('span', { text: item.label }),
               ),
             ),
+            el(
+              'button',
+              {
+                class: 'nav-link',
+                type: 'button',
+                on: {
+                  click: () => {
+                    modal.remove();
+                    router.navigate('/importar');
+                  },
+                },
+              },
+              icon('upload', 20),
+              el('span', { text: 'Importar datos' }),
+            ),
           );
           modal.appendChild(sheet);
           modal.addEventListener('click', (e) => {
@@ -235,6 +250,9 @@ export function createShell(root: HTMLElement, app: App): Shell {
     }
     for (const [key, btn] of navButtons) btn.classList.toggle('active', key === best);
     for (const [key, btn] of bottomButtons) btn.classList.toggle('active', key === best);
+    // El botón "Más" queda activo en las pantallas que no están en la barra inferior.
+    const inBottomNav = mobileItems.some((i) => i.path === best);
+    moreBtn.classList.toggle('active', best !== '' && !inBottomNav);
   }
 
   const originalResolve = router.resolve.bind(router);
@@ -258,8 +276,10 @@ export function createShell(root: HTMLElement, app: App): Shell {
       p: '/produccion',
       s: '/stock',
       c: '/clientes',
-      i: '/inventario',
-      g: '/',
+      i: '/importar',
+      g: '/gastos',
+      r: '/reportes',
+      a: '/ajustes',
     };
     const dest = map[e.key.toLowerCase()];
     if (dest) {
@@ -272,6 +292,23 @@ export function createShell(root: HTMLElement, app: App): Shell {
     if (event.type === 'state') refresh();
     if (event.type === 'error') toast(event.message, { kind: 'error' });
   });
+
+  /* FAB de acción principal (Material Design 3). En compacto es el punto
+     de entrada principal; en medio/expandido coexiste con el topbar. */
+  const fab = el(
+    'button',
+    {
+      class: 'fab',
+      type: 'button',
+      'aria-label': 'Nuevo pedido',
+      on: {
+        click: () => router.navigate('/pedidos/nuevo'),
+      },
+    },
+    icon('plus', 20),
+    'Pedido',
+  );
+  document.body.appendChild(fab);
 
   return {
     router,
