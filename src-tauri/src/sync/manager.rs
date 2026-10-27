@@ -725,4 +725,66 @@ impl SyncManager {
     }
     Ok(SyncBatchResult { reports, errors })
   }
+
+  /**
+   * Busca dispositivos con la ventana de emparejamiento abierta escaneando su
+   * puerto TCP en la misma subred /24. Es el plan B cuando el firewall bloquea
+   * UDP/multicast y el descubrimiento automático no ve al otro dispositivo.
+   */
+  pub async fn scan_lan(&self) -> Result<Vec<String>, String> {
+    use std::net::{Ipv4Addr, SocketAddr};
+    use std::time::Duration;
+    use tokio::net::TcpStream;
+    use tokio::task::JoinSet;
+
+    let mut targets: Vec<Ipv4Addr> = Vec::new();
+    if let Ok(interfaces) = if_addrs::get_if_addrs() {
+      for iface in interfaces {
+        if iface.is_loopback() {
+          continue;
+        }
+        if let if_addrs::IfAddr::V4(v4) = iface.addr {
+          if !v4.ip.is_private() {
+            continue;
+          }
+          let base = u32::from(v4.ip) & 0xFFFF_FF00;
+          for host in 1..=254u32 {
+            let ip = Ipv4Addr::from(base | host);
+            if ip == v4.ip {
+              continue;
+            }
+            if !targets.contains(&ip) {
+              targets.push(ip);
+            }
+          }
+        }
+      }
+    }
+    if targets.is_empty() {
+      return Err(
+        "No se encontró una red IPv4 local. Conectate a la misma Wi-Fi que el otro dispositivo."
+          .into(),
+      );
+    }
+
+    let mut tasks = JoinSet::new();
+    for ip in targets {
+      tasks.spawn(async move {
+        let addr = SocketAddr::from((ip, PAIRING_PORT));
+        match tokio::time::timeout(Duration::from_millis(220), TcpStream::connect(addr)).await {
+          Ok(Ok(_)) => Some(ip.to_string()),
+          _ => None,
+        }
+      });
+    }
+
+    let mut found = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+      if let Ok(Some(ip)) = result {
+        found.push(ip);
+      }
+    }
+    found.sort();
+    Ok(found)
+  }
 }

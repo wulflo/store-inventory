@@ -121,11 +121,11 @@
 
 ## 10. Sincronización P2P
 
-- [ ] Desktop debe descubrir dispositivos Android en la LAN.
+- [~] Desktop debe descubrir dispositivos Android en la LAN: se agregó “Buscar en la red” (escaneo TCP del puerto 14243) para saltar el bloqueo de UDP/multicast.
 - [~] Android debe recibir respuesta al escanear el QR: se agregó reintento con la IP vista por discovery si falla la IP del QR.
 - [x] Iniciar conexión al seleccionar un dispositivo descubierto (usa puerto de pairing).
 - [~] Mostrar solicitud de emparejamiento en ambos lados: el SAS se muestra al recibir la conexión; falta probarlo en dispositivos reales.
-- [ ] Diagnóstico visible: IP, puerto, firewall, multicast.
+- [~] Diagnóstico visible: IP, puerto, firewall, multicast. Se muestran IPs y resultados del escaneo TCP; falta un diagnóstico más detallado.
 - [~] Reintentar conexión y mostrar error real: fallback QR → discovery y mensajes de error detallados.
 
 ---
@@ -185,5 +185,6 @@ gh run list --limit 5
 - Agregado botón “Abrir descargas” en Actualizaciones para ir a la página de releases.
 - Agregado fallback de conexión QR: si la IP del QR no responde, se reintenta con `ip:pairing_port` obtenido por discovery.
 - Aclarado en la UI que el SAS de 6 dígitos se genera al recibir la conexión.
+- Agregado “Buscar en la red”: escanea la subred /24 por el puerto TCP 14243 y lista dispositivos con emparejamiento abierto, como plan B si el firewall bloquea UDP.
 - Verificación: `npm run typecheck`, `npm test` (49), `npm run build`, `cargo test` (85) y `cargo check` pasan.
 - Pendiente: validar sync real entre desktop/Android, OCR de texto real y descarga de actualizaciones en cada dispositivo.

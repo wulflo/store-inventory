@@ -87,6 +87,8 @@ export function settingsSyncCard(app: App): HTMLElement {
   let peers: Peer[] = [];
   let pending: PendingPairing | null = null;
   let discovered: DiscoveredPeer[] = [];
+  let scanned: string[] = [];
+  let scanning = false;
   let busy = false;
   let listening = false;
   let addressDraft = '';
@@ -258,6 +260,26 @@ export function settingsSyncCard(app: App): HTMLElement {
       showError(err);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function scanLan(): Promise<void> {
+    scanning = true;
+    message = 'Buscando dispositivos con emparejamiento abierto en la red…';
+    render();
+    try {
+      scanned = await invoke<string[]>('sync_scan_lan');
+      message =
+        scanned.length > 0
+          ? `Encontrados ${scanned.length} dispositivo(s). Elegí uno para conectar.`
+          : 'No se encontró ningún dispositivo. Verificá que el otro equipo tenga abierta la opción “Mostrar mi código y esperar” y que estén en la misma Wi-Fi.';
+    } catch (err) {
+      scanned = [];
+      message = err instanceof Error ? err.message : String(err);
+      showError(err);
+    } finally {
+      scanning = false;
+      render();
     }
   }
 
@@ -693,6 +715,50 @@ export function settingsSyncCard(app: App): HTMLElement {
             on: { click: () => void connectTo(input.value) },
           }),
         ),
+        el(
+          'div',
+          { class: 'btn-group', style: { marginTop: '8px' } },
+          el(
+            'button',
+            {
+              class: 'btn btn-sm',
+              type: 'button',
+              disabled: busy || scanning,
+              on: { click: () => void scanLan() },
+            },
+            icon('search', 16),
+            scanning ? 'Buscando en la red…' : 'Buscar en la red',
+          ),
+        ),
+        scanned.length > 0
+          ? el(
+              'div',
+              { class: 'sync-peers mt-3' },
+              ...scanned.map((ip) =>
+                el(
+                  'div',
+                  { class: 'sync-peer' },
+                  el(
+                    'div',
+                    { class: 'sync-peer-main' },
+                    el('span', { class: 'sync-peer-name', text: ip }),
+                    el('span', { class: 'xsmall muted', text: 'Emparejamiento abierto' }),
+                  ),
+                  el(
+                    'div',
+                    { class: 'sync-peer-actions' },
+                    el('button', {
+                      class: 'btn btn-sm btn-primary',
+                      type: 'button',
+                      disabled: busy,
+                      text: 'Conectar',
+                      on: { click: () => void connectTo(ip) },
+                    }),
+                  ),
+                ),
+              ),
+            )
+          : null,
       ),
       el('div', { class: 'sync-or' }, el('span', { text: 'o' })),
       el('button', {

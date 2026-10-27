@@ -204,6 +204,11 @@ fn sync_remove_peer(state: tauri::State<'_, SyncManager>, device_id: String) -> 
   state.remove_peer(&device_id)
 }
 
+#[tauri::command]
+async fn sync_scan_lan(state: tauri::State<'_, SyncManager>) -> Result<Vec<String>, String> {
+  state.scan_lan().await
+}
+
 /* ------------------------------------------------------------------ */
 /* Aplicación                                                         */
 /* ------------------------------------------------------------------ */
@@ -250,6 +255,7 @@ pub fn run() {
       sync_now,
       sync_set_peer_address,
       sync_remove_peer,
+      sync_scan_lan,
       updater::cmd_updater_check,
       updater::cmd_updater_install,
       updater::cmd_open_release_page,
