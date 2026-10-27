@@ -7,7 +7,6 @@ import { toast } from './ui/components/toast';
 import { TauriEventStore } from './store/TauriEventStore';
 import { MemoryEventStore, WebEventStore } from './store/WebEventStore';
 import type { EventStore } from './store/EventStore';
-import { seedIfEmpty } from './seed/seed';
 import { uuid7 } from './core/ids';
 import { applyTheme } from './ui/theme';
 
@@ -86,16 +85,6 @@ async function boot(): Promise<void> {
   /* --- App --- */
   const app = new App(store, deviceId);
   await app.init();
-
-  /* --- Datos de demostración (solo si la base está vacía) --- */
-  try {
-    const seeded = await seedIfEmpty(app);
-    if (seeded) {
-      console.info('Datos de demostración cargados.');
-    }
-  } catch (err) {
-    console.error('seed falló', err);
-  }
 
   /* --- Tema y acento --- */
   applyTheme(

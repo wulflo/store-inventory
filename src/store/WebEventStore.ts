@@ -130,6 +130,17 @@ export class WebEventStore implements EventStore {
     return { imported: fresh.length, skipped: bundle.events.length - fresh.length };
   }
 
+  async clearAll(): Promise<void> {
+    for (const domain of DOMAIN_LIST) {
+      try {
+        await this.dir.removeEntry(`${domain}.jsonl`);
+      } catch {
+        // ignore
+      }
+    }
+    this.listeners.forEach((l) => {});
+  }
+
   private emit(domain: Domain): void {
     for (const l of this.listeners) l(domain);
   }
@@ -195,6 +206,10 @@ export class MemoryEventStore implements EventStore {
     }
     for (const [d, list] of byDomain) await this.append(d, list);
     return { imported: fresh.length, skipped: bundle.events.length - fresh.length };
+  }
+
+  async clearAll(): Promise<void> {
+    this.data.clear();
   }
 
   private emit(domain: Domain): void {

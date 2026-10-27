@@ -88,6 +88,23 @@ pub fn store_ensure_layout(root: String) -> Result<(), String> {
   Ok(())
 }
 
+/** Borra todos los archivos de eventos (.jsonl) del store. */
+#[tauri::command]
+pub fn store_clear(root: String) -> Result<(), String> {
+  let dir = events_dir(&root);
+  if dir.exists() {
+    for entry in fs::read_dir(&dir).map_err(|e| format!("No se pudo leer la carpeta de datos: {e}"))? {
+      let entry = entry.map_err(|e| e.to_string())?;
+      let path = entry.path();
+      if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+        let _ = fs::remove_file(&path);
+      }
+    }
+  }
+  fs::create_dir_all(&dir).map_err(|e| format!("No se pudo recrear la carpeta de datos: {e}"))?;
+  Ok(())
+}
+
 /** Agrega líneas al final de un archivo de dominio (append-only real). */
 #[tauri::command]
 pub fn store_append(root: String, domain: String, lines: Vec<String>) -> Result<(), String> {

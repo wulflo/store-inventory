@@ -142,6 +142,12 @@ export class TauriEventStore implements EventStore {
     return { imported: toImport.length, skipped };
   }
 
+  async clearAll(): Promise<void> {
+    if (!this.root) return;
+    await this.invoke<void>('store_clear', { root: this.root });
+    this.lastSeen.clear();
+  }
+
   /* ---------------------------------------------------------------- */
   /* Observación de cambios externos (Syncthing/Drive)                 */
   /* ---------------------------------------------------------------- */

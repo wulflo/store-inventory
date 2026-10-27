@@ -92,7 +92,7 @@ export function expensesView(app: App, shell: Shell): HTMLElement {
             'div',
             { class: 'kpi' },
             el('div', { class: 'kpi-label', text: EXPENSE_CATEGORY_LABEL[c.category as ExpenseCategory] ?? c.category }),
-            el('div', { class: 'kpi-value', style: { fontSize: '1.4rem' }, text: money(c.amountCents) }),
+            el('div', { class: 'kpi-value', text: money(c.amountCents) }),
             el('div', { class: 'kpi-hint', text: `${c.count} gasto(s)` }),
           ),
         ),

@@ -43,6 +43,9 @@ export interface EventStore {
 
   /** Importa un bundle exportado (merge por eventId: ignora duplicados). */
   importBundle(bundle: ExportBundle): Promise<{ imported: number; skipped: number }>;
+
+  /** Borra todos los eventos persistidos (deja el store vacío). */
+  clearAll(): Promise<void>;
 }
 
 export interface ExportBundle {

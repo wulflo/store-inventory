@@ -826,9 +826,13 @@ textarea {
   color: var(--text-2);
 }
 .kpi-value {
-  font-size: var(--fs-2xl);
+  font-size: var(--fs-xl);
   font-weight: 600;
   color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+  line-height: 1.1;
 }
 .kpi-hint {
   font-size: var(--fs-xs);
@@ -925,7 +929,9 @@ table.data tr:last-child td {
 table.data td.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: calc(var(--fs-sm) - 1px);
   letter-spacing: -0.01em;
 }
@@ -974,6 +980,10 @@ table.data td.num {
 .list-item-value {
   font-size: var(--fs-xs);
   color: var(--text-3);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+  min-width: 0;
 }
 
 /* ------------------------------------------------------------------
@@ -1005,6 +1015,8 @@ table.data td.num {
   min-width: 0;
   overflow: hidden;
 }
+
+.topbar-menu { display: none; }
 
 .sidebar {
   width: var(--sidebar-w);
@@ -1098,7 +1110,7 @@ table.data td.num {
 }
 
 .bottom-nav {
-  display: flex;
+  display: none;
   height: calc(var(--bottomnav-h) + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
   background: var(--surface);
@@ -1592,6 +1604,9 @@ table.data td.num {
 @media (max-width: 599px) {
   .sidebar {
     display: none;
+  }
+  .topbar-menu {
+    display: inline-flex;
   }
   .main {
     flex-direction: column;

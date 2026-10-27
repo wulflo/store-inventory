@@ -79,6 +79,17 @@ export function createShell(root: HTMLElement, app: App): Shell {
       el(
         'button',
         {
+          class: 'btn-icon topbar-menu',
+          type: 'button',
+          'aria-label': 'Menú',
+          title: 'Menú',
+          on: { click: () => openDrawer() },
+        },
+        icon('menu', 20),
+      ),
+      el(
+        'button',
+        {
           class: 'btn btn-primary btn-sm topbar-new',
           type: 'button',
           on: {
@@ -157,104 +168,76 @@ export function createShell(root: HTMLElement, app: App): Shell {
   navButtons.set('/importar', importBtn);
   sidebar.appendChild(importBtn);
 
-  // ---- Bottom nav (mobile) ----
+  // ---- Drawer (mobile) con todas las funciones ----
   const bottomButtons = new Map<string, HTMLElement>();
-  const bottomNav = el('nav', { class: 'bottom-nav', 'aria-label': 'Navegación principal' });
-  const mobileItems = NAV_ITEMS.filter((i) => i.primary);
-  for (const item of mobileItems) {
-    const btn = el(
-      'button',
-      {
-        type: 'button',
-        dataset: { path: item.path },
-        on: {
-          click: () => router.navigate(item.path),
-        },
-      },
-      icon(item.icon, 22),
-      el('span', { text: item.label }),
+
+  function openDrawer(): void {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'drawer-backdrop';
+    const drawer = el(
+      'aside',
+      { class: 'drawer' },
+      el(
+        'div',
+        { class: 'drawer-head' },
+        el('h3', { text: 'Menú', style: { margin: '0' } }),
+        el(
+          'button',
+          {
+            class: 'icon-btn',
+            type: 'button',
+            on: { click: () => backdrop.remove() },
+          },
+          icon('x', 20),
+        ),
+      ),
+      el(
+        'nav',
+        { class: 'drawer-nav' },
+        ...NAV_ITEMS.map((item) =>
+          el(
+            'button',
+            {
+              class: 'nav-link',
+              type: 'button',
+              on: {
+                click: () => {
+                  backdrop.remove();
+                  router.navigate(item.path);
+                },
+              },
+            },
+            icon(item.icon, 20),
+            el('span', { text: item.label }),
+          ),
+        ),
+        el(
+          'button',
+          {
+            class: 'nav-link',
+            type: 'button',
+            on: {
+              click: () => {
+                backdrop.remove();
+                router.navigate('/importar');
+              },
+            },
+          },
+          icon('upload', 20),
+          el('span', { text: 'Importar datos' }),
+        ),
+      ),
     );
-    bottomButtons.set(item.path, btn);
-    bottomNav.appendChild(btn);
+    backdrop.appendChild(drawer);
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) backdrop.remove();
+    });
+    document.body.appendChild(backdrop);
+    requestAnimationFrame(() => backdrop.classList.add('open'));
   }
-  const moreBtn = el(
-    'button',
-    {
-      type: 'button',
-      on: {
-        click: () => {
-          const backdrop = document.createElement('div');
-          backdrop.className = 'drawer-backdrop';
-          const drawer = el(
-            'aside',
-            { class: 'drawer' },
-            el(
-              'div',
-              { class: 'drawer-head' },
-              el('h3', { text: 'Menú', style: { margin: '0' } }),
-              el(
-                'button',
-                {
-                  class: 'icon-btn',
-                  type: 'button',
-                  on: { click: () => backdrop.remove() },
-                },
-                icon('x', 20),
-              ),
-            ),
-            el(
-              'nav',
-              { class: 'drawer-nav' },
-              ...NAV_ITEMS.filter((i) => !i.primary).map((item) =>
-                el(
-                  'button',
-                  {
-                    class: 'nav-link',
-                    type: 'button',
-                    on: {
-                      click: () => {
-                        backdrop.remove();
-                        router.navigate(item.path);
-                      },
-                    },
-                  },
-                  icon(item.icon, 20),
-                  el('span', { text: item.label }),
-                ),
-              ),
-              el(
-                'button',
-                {
-                  class: 'nav-link',
-                  type: 'button',
-                  on: {
-                    click: () => {
-                      backdrop.remove();
-                      router.navigate('/importar');
-                    },
-                  },
-                },
-                icon('upload', 20),
-                el('span', { text: 'Importar datos' }),
-              ),
-            ),
-          );
-          backdrop.appendChild(drawer);
-          backdrop.addEventListener('click', (e) => {
-            if (e.target === backdrop) backdrop.remove();
-          });
-          document.body.appendChild(backdrop);
-          requestAnimationFrame(() => backdrop.classList.add('open'));
-        },
-      },
-    },
-    icon('menu', 22),
-    el('span', { text: 'Menú' }),
-  );
-  bottomNav.appendChild(moreBtn);
 
   const main = el('div', { class: 'main' }, topbar, outlet);
-  mount(root, el('div', { class: 'layout' }, sidebar, main), bottomNav);
+  mount(root, el('div', { class: 'layout' }, sidebar, main));
 
   applyThemeIcon();
 
@@ -270,9 +253,6 @@ export function createShell(root: HTMLElement, app: App): Shell {
     }
     for (const [key, btn] of navButtons) btn.classList.toggle('active', key === best);
     for (const [key, btn] of bottomButtons) btn.classList.toggle('active', key === best);
-    // El botón "Más" queda activo en las pantallas que no están en la barra inferior.
-    const inBottomNav = mobileItems.some((i) => i.path === best);
-    moreBtn.classList.toggle('active', best !== '' && !inBottomNav);
   }
 
   const originalResolve = router.resolve.bind(router);

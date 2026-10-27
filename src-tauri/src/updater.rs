@@ -214,7 +214,10 @@ pub async fn cmd_updater_check(app: AppHandle) -> Result<UpdateCheck, String> {
   #[cfg(target_os = "android")]
   {
     let _ = app;
-    android_check().await
+    match tokio::time::timeout(std::time::Duration::from_secs(30), android_check()).await {
+      Ok(res) => res,
+      Err(_) => Err("Tiempo agotado al buscar actualizaciones.".into()),
+    }
   }
   #[cfg(not(target_os = "android"))]
   {
@@ -222,11 +225,10 @@ pub async fn cmd_updater_check(app: AppHandle) -> Result<UpdateCheck, String> {
     let updater = app
       .updater()
       .map_err(|e| format!("El actualizador no está disponible: {e}"))?;
-    match updater
-      .check()
+    let check_result = tokio::time::timeout(std::time::Duration::from_secs(30), updater.check())
       .await
-      .map_err(|e| format!("No se pudo buscar actualizaciones: {e}"))?
-    {
+      .map_err(|_| "Tiempo agotado al buscar actualizaciones.".to_string())?;
+    match check_result.map_err(|e| format!("No se pudo buscar actualizaciones: {e}"))? {
       Some(update) => Ok(UpdateCheck {
         available: true,
         current_version: update.current_version.clone(),
@@ -254,7 +256,10 @@ pub async fn cmd_updater_install(app: AppHandle) -> Result<String, String> {
   #[cfg(target_os = "android")]
   {
     let _ = app;
-    android_install().await
+    match tokio::time::timeout(std::time::Duration::from_secs(300), android_install()).await {
+      Ok(res) => res,
+      Err(_) => Err("Tiempo agotado al descargar la actualización.".into()),
+    }
   }
   #[cfg(not(target_os = "android"))]
   {
@@ -262,15 +267,19 @@ pub async fn cmd_updater_install(app: AppHandle) -> Result<String, String> {
     let updater = app
       .updater()
       .map_err(|e| format!("El actualizador no está disponible: {e}"))?;
-    let update = updater
-      .check()
+    let check_result = tokio::time::timeout(std::time::Duration::from_secs(30), updater.check())
       .await
+      .map_err(|_| "Tiempo agotado al buscar actualizaciones.".to_string())?;
+    let update = check_result
       .map_err(|e| format!("No se pudo buscar actualizaciones: {e}"))?
       .ok_or_else(|| "Ya tenés la última versión.".to_string())?;
-    update
-      .download_and_install(|_, _| {}, || {})
-      .await
-      .map_err(|e| format!("No se pudo instalar la actualización: {e}"))?;
+    tokio::time::timeout(
+      std::time::Duration::from_secs(300),
+      update.download_and_install(|_, _| {}, || {}),
+    )
+    .await
+    .map_err(|_| "Tiempo agotado al descargar la actualización.".to_string())?
+    .map_err(|e| format!("No se pudo instalar la actualización: {e}"))?;
     Ok(format!(
       "Versión {} descargada e instalada. Cerrá y volvé a abrir la app para usar la nueva versión.",
       update.version

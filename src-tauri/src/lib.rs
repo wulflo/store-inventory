@@ -8,7 +8,7 @@ mod updater;
 #[cfg(target_os = "android")]
 mod android_fs;
 
-use event_store::{store_append, store_device_id, store_ensure_layout, store_mtimes, store_read};
+use event_store::{store_append, store_clear, store_device_id, store_ensure_layout, store_mtimes, store_read};
 use serde::Serialize;
 use sync::manager::{IdentityInfo, SyncBatchResult, SyncLocalInfo, SyncManager};
 use sync::pairing::PendingPairing;
@@ -229,6 +229,7 @@ pub fn run() {
       get_app_data_dir,
       store_default_root,
       store_ensure_layout,
+      store_clear,
       store_append,
       store_read,
       store_mtimes,

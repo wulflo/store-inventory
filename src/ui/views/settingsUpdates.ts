@@ -133,7 +133,12 @@ export function settingsUpdatesCard(): HTMLElement {
     message = '';
     render();
     try {
-      check = await invoke<UpdateCheck>('cmd_updater_check');
+      check = await Promise.race([
+        invoke<UpdateCheck>('cmd_updater_check'),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Tiempo agotado al buscar actualizaciones.')), 30000),
+        ),
+      ]);
       if (!check.available) {
         message = 'No hay actualizaciones disponibles.';
       }
@@ -152,7 +157,12 @@ export function settingsUpdatesCard(): HTMLElement {
     message = '';
     render();
     try {
-      message = await invoke<string>('cmd_updater_install');
+      message = await Promise.race([
+        invoke<string>('cmd_updater_install'),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Tiempo agotado al descargar la actualización.')), 300000),
+        ),
+      ]);
       toastSuccess('Actualización descargada.');
       check = null;
     } catch (err) {

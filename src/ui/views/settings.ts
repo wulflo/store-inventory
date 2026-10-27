@@ -251,12 +251,21 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
               const ok = await confirmDialog({
                 title: 'Vaciar todos los datos',
                 message:
-                  'Se borran todos los pedidos, productos y movimientos de este dispositivo. Esto no se puede deshacer. Exportá una copia antes si tenés dudas.',
+                  'Se borran todos los pedidos, productos, movimientos y ajustes de este dispositivo. Esto no se puede deshacer. Exportá una copia antes si tenés dudas.',
                 confirmLabel: 'Sí, vaciar todo',
                 danger: true,
               });
               if (!ok) return;
-              toastSuccess('Para un borrado total, borrá la carpeta de datos desde Ajustes del sistema.');
+              try {
+                if (typeof (app.store as any).clearAll === 'function') {
+                  await (app.store as any).clearAll();
+                }
+                await app.rebuild();
+                toastSuccess('Todos los datos se vaciaron.');
+                shell.router.navigate('/');
+              } catch (err) {
+                showError(err);
+              }
             },
           },
         }),
