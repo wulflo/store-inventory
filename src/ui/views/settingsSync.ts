@@ -297,8 +297,9 @@ export function settingsSyncCard(app: App): HTMLElement {
   }
 
   async function pairDiscovered(peer: DiscoveredPeer): Promise<void> {
-    addressDraft = peer.address;
-    await connectTo(peer.address);
+    const pairingAddr = `${peer.ip}:${peer.pairing_port}`;
+    addressDraft = pairingAddr;
+    await connectTo(pairingAddr);
   }
 
   async function connectQr(payload: string): Promise<void> {

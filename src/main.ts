@@ -108,6 +108,16 @@ async function boot(): Promise<void> {
     });
   }
 
+  /* --- Sincronización: arrancar el servidor/discovery en segundo plano --- */
+  if (isTauri()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('sync_start', { name: deviceName() });
+    } catch (err) {
+      console.warn('sync_start automático falló', err);
+    }
+  }
+
   /* --- Interfaz --- */
   const shell = createShell(root, app);
   registerRoutes(app, shell);
