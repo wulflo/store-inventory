@@ -111,7 +111,7 @@
 
 ## 9. OCR y escaneo
 
-- [x] Revisar flujo de escaneo de QR con cámara.
+- [x] Revisar flujo de escaneo de QR con cámara: jsQR + detector nativo `BarcodeDetector` cuando está disponible.
 - [ ] Agregar OCR de texto real (si aplica a códigos/facturas/etiquetas). El escáner actual decodifica QR, no texto.
 - [~] El SAS se muestra al recibir la conexión; falta validar en dispositivo real.
 - [x] Permitir pegar/tipear el contenido del QR.
@@ -186,5 +186,6 @@ gh run list --limit 5
 - Agregado fallback de conexión QR: si la IP del QR no responde, se reintenta con `ip:pairing_port` obtenido por discovery.
 - Aclarado en la UI que el SAS de 6 dígitos se genera al recibir la conexión.
 - Agregado “Buscar en la red”: escanea la subred /24 por el puerto TCP 14243 y lista dispositivos con emparejamiento abierto, como plan B si el firewall bloquea UDP.
+- El escáner de cámara usa `BarcodeDetector` nativo como respaldo de jsQR, para mejorar la lectura en Android.
 - Verificación: `npm run typecheck`, `npm test` (49), `npm run build`, `cargo test` (85) y `cargo check` pasan.
 - Pendiente: validar sync real entre desktop/Android, OCR de texto real y descarga de actualizaciones en cada dispositivo.

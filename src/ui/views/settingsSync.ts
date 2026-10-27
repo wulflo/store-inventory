@@ -438,7 +438,26 @@ export function settingsSyncCard(app: App): HTMLElement {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     let raf = 0;
+    let finished = false;
+    const nativeDetector = (() => {
+      const Detector = (window as any).BarcodeDetector;
+      if (!Detector) return null;
+      try {
+        return new Detector({ formats: ['qr_code'] });
+      } catch {
+        return null;
+      }
+    })();
+    const finish = (payload: string): void => {
+      if (finished) return;
+      finished = true;
+      cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((t) => t.stop());
+      modal.close();
+      void connectQr(payload);
+    };
     const tick = (): void => {
+      if (finished) return;
       if (video.readyState >= video.HAVE_ENOUGH_DATA && ctx) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -446,11 +465,19 @@ export function settingsSyncCard(app: App): HTMLElement {
         const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const code = jsQR(data.data, data.width, data.height);
         if (code?.data) {
-          cancelAnimationFrame(raf);
-          stream?.getTracks().forEach((t) => t.stop());
-          modal.close();
-          void connectQr(code.data);
+          finish(code.data);
           return;
+        }
+        if (nativeDetector) {
+          void nativeDetector
+            .detect(video)
+            .then((codes: Array<{ rawValue?: string }>) => {
+              const value = codes?.[0]?.rawValue;
+              if (value) finish(value);
+            })
+            .catch(() => {
+              /* el detector nativo es opcional */
+            });
         }
       }
       raf = requestAnimationFrame(tick);
