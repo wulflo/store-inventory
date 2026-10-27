@@ -61,11 +61,6 @@ async function writeJson(path, obj) {
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf8');
 }
 
-function replaceVersionInText(text, oldVer, newVer) {
-  // Reemplaza "version": "1.0.0" (con opcional coma después es parte del JSON, solo tocamos el valor)
-  return text.replace(/"version"\s*:\s*"[^"]*"/, `"version": "${newVer}"`);
-}
-
 function semverGt(a, b) {
   const pa = parseSemver(a);
   const pb = parseSemver(b);
@@ -186,9 +181,10 @@ async function set(newVerRaw) {
 
   // --- Actualizar package-lock.json (versión raíz) ---
   try {
-    const lockText = await readFile(PKG_LOCK);
-    const newLock = replaceVersionInText(lockText, oldVer, newVer);
-    if (newLock !== lockText) await writeFile(PKG_LOCK, newLock, 'utf8');
+    const lock = JSON.parse(await readFile(PKG_LOCK, 'utf8'));
+    lock.version = newVer;
+    if (lock.packages && lock.packages['']) lock.packages[''].version = newVer;
+    await writeFile(PKG_LOCK, JSON.stringify(lock, null, 2) + '\n', 'utf8');
   } catch {
     /* package-lock.json puede no existir */
   }
