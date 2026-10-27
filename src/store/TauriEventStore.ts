@@ -54,6 +54,13 @@ export class TauriEventStore implements EventStore {
     });
     this.lastSeen.set(domain, Date.now());
     this.emit(domain);
+    // Disparar sync automático (debounce)
+    try {
+      const { onStoreAppended } = await import('../sync/autoSync');
+      onStoreAppended();
+    } catch {
+      // ignore
+    }
   }
 
   async read(domain: Domain): Promise<DomainEvent[]> {

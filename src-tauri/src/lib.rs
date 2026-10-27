@@ -224,7 +224,12 @@ pub fn run() {
       store_space_info,
       backup::backup_status,
       backup::backup_set_vault,
+      backup::backup_check_vault,
       backup::backup_run_daily,
+      backup::backup_pull_from_vault,
+      sync_auto_get,
+      sync_auto_set,
+      battery_status,
     ])
     .run(tauri::generate_context!())
     .expect("error al ejecutar Inventario Tienda");
@@ -237,6 +242,72 @@ pub fn run() {
 #[tauri::command]
 fn store_space_info() -> Result<serde_json::Value, String> {
   Ok(serde_json::json!({ "ok": true }))
+}
+
+/* ------------------------------------------------------------------ */
+/* Configuración de sincronización automática                         */
+/* ------------------------------------------------------------------ */
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct SyncAutoConfig {
+  enabled: bool,
+  respect_battery_saver: bool,
+}
+
+impl Default for SyncAutoConfig {
+  fn default() -> Self {
+    Self { enabled: false, respect_battery_saver: true }
+  }
+}
+
+fn sync_config_path(root: &str) -> std::path::PathBuf {
+  std::path::Path::new(root).join("sync_auto.json")
+}
+
+#[tauri::command]
+fn sync_auto_get(root: String) -> Result<SyncAutoConfig, String> {
+  let p = sync_config_path(&root);
+  if !p.exists() {
+    return Ok(SyncAutoConfig::default());
+  }
+  let s = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+  serde_json::from_str(&s).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sync_auto_set(root: String, enabled: bool, respect_battery_saver: bool) -> Result<(), String> {
+  let p = sync_config_path(&root);
+  let cfg = SyncAutoConfig { enabled, respect_battery_saver };
+  let s = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+  std::fs::write(&p, s).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn battery_status() -> Result<serde_json::Value, String> {
+  #[cfg(target_os = "android")]
+  {
+    let (power_save, level, charging) = crate::android_fs::battery_info();
+    let effective_mode = if power_save || (level < 15 && !charging) {
+      "ahorro"
+    } else {
+      "normal"
+    };
+    return Ok(serde_json::json!({
+      "power_save_mode": power_save,
+      "battery_level": level,
+      "is_charging": charging,
+      "effective_mode": effective_mode
+    }));
+  }
+  #[cfg(not(target_os = "android"))]
+  {
+    Ok(serde_json::json!({
+      "power_save_mode": false,
+      "battery_level": 100,
+      "is_charging": true,
+      "effective_mode": "normal"
+    }))
+  }
 }
 
 mod backup;

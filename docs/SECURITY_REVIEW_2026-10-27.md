@@ -12,8 +12,8 @@ El protocolo implementa una arquitectura **LAN-only** con múltiples capas defen
 
 | Componente | Puerto | Bind | Estado | Comentario |
 |---|---|---|---|---|
-| Servidor de sync | `SYNC_PORT` (14243) | `0.0.0.0` | **ACEPTABLE CON RESTRICCIONES** | Se bindea a todas las interfaces, pero **filtra por IP LAN** en `accept()` y rechaza conexiones no-LAN. Ver `server.rs:51,67-69` |
-| Servidor de pairing | `PAIRING_PORT` (14244) | `0.0.0.0` | **RIESGO BAJO** | Similar, pero para emparejamiento temporal con SAS. Solo acepta tras validación. Ver `server.rs:350` |
+| Servidor de sync | `SYNC_PORT` (14242) | `0.0.0.0` | **ACEPTABLE CON RESTRICCIONES** | Se bindea a todas las interfaces, pero **filtra por IP LAN** en `accept()` y rechaza conexiones no-LAN. Ver `server.rs:51,67-69` |
+| Servidor de pairing | `PAIRING_PORT` (14243) | `0.0.0.0` | **RIESGO BAJO** | Similar, pero para emparejamiento temporal con SAS. Solo acepta tras validación. Ver `server.rs:350` |
 | Descubrimiento multicast | UDP 5353 mDNS estilo | 224.0.0.251 / ff02::fb | **RESTRINGIDO** | Valida origen LAN. Ver `discovery.rs` y `net.rs` |
 
 **Hallazgo:** Bindear a `0.0.0.0` es necesario para aceptar conexiones LAN en todas las interfaces (WiFi, Ethernet). El filtrado posterior por IP es correcto, pero **un escáner externo no podría alcanzar si no hay ruta**. Sin embargo, si el equipo está expuesto por algún tunel/VPN mal configurado, el filtro IP es la única barrera.
@@ -134,3 +134,14 @@ El protocolo implementa una arquitectura **LAN-only** con múltiples capas defen
 El protocolo es **sólidamente seguro para su threat model (LAN-only, dispositivos confiables)**. Los controles principales (mTLS + pinning + SAS + validación LAN) están correctamente implementados. Los hallazgos identificados son mayoritariamente mejoras, no vulnerabilidades explotables con el diseño actual.
 
 **Calificación:** BUENO - Listo para uso en red local confiable con las recomendaciones aplicadas.
+
+## Actualización FASE 2 (2026-10-27)
+
+Cambios implementados tras la revisión:
+
+- **Rate limiting básico por IP** en `server.rs`: máximo 20 conexiones por minuto por IP. Previene DoS/brute force.
+- **Logging estructurado de rechazos**: IPs no LAN, pinning fallido, rate-limit excedido se loguean con prefijo `[sync]`.
+- **Fallback UDP a 8.8.8.8 eliminado** en `local_lan_addresses()` (verificado: ya no existe en código).
+- **Puertos confirmados**: sync `14242`, emparejamiento `14243`.
+- **No existe `pair.rs`**: solo `pairing.rs`.
+- **Sincronización por delta (IDs)**: implementada en `client.rs`/`server.rs`. Solo viajan eventos faltantes.

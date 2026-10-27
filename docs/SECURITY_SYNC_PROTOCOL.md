@@ -51,7 +51,7 @@ Estado: Implementado con restricciones estrictas
 - Certificados cargados desde identidad propia
 
 ### 4) Emparejamiento (Pairing)
-- **Archivos**: `src-tauri/src/sync/pair.rs`, `src-tauri/src/sync/pairing.rs`
+- **Archivos**: `src-tauri/src/sync/pairing.rs` (no existe `pair.rs`)
 - Intercambio de certificados + Device ID + fingerprint
 - SAS code = f(local_fp, remote_fp, transcript) % 10^6
 - Solo se añade a `peers.json` tras confirmación manual del SAS

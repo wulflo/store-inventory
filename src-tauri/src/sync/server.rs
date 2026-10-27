@@ -58,14 +58,34 @@ pub async fn start_sync_server(
   let (shutdown, mut rx) = watch::channel(false);
 
   let task = tokio::spawn(async move {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+    let mut rate_limit: HashMap<std::net::IpAddr, (u32, Instant)> = HashMap::new();
+    let rate_limit_window = Duration::from_secs(60);
+    let rate_limit_max = 20u32;
+
     loop {
       tokio::select! {
         _ = rx.changed() => break,
         accepted = listener.accept() => {
           match accepted {
             Ok((tcp, remote)) => {
-              if !is_lan_ip(remote.ip()) {
+              let ip = remote.ip();
+              if !is_lan_ip(ip) {
+                println!("[sync] RECHAZO: IP no LAN intentó conectar: {}", ip);
                 continue;
+              }
+              // Rate limiting por IP
+              let now = Instant::now();
+              let entry = rate_limit.entry(ip).or_insert((0, now));
+              if now.duration_since(entry.1) > rate_limit_window {
+                *entry = (1, now);
+              } else {
+                entry.0 += 1;
+                if entry.0 > rate_limit_max {
+                  println!("[sync] RECHAZO rate-limit: {} superó {} conexiones/min", ip, rate_limit_max);
+                  continue;
+                }
               }
               let acceptor = acceptor.clone();
               let peers = Arc::clone(&peers);
@@ -165,7 +185,10 @@ async fn serve_authenticated(
     let store = peers.lock().unwrap_or_else(|e| e.into_inner());
     match store.trusted_by_fingerprint(&fingerprint) {
       Some(peer) => (peer.name.clone(), peer.device_id.clone()),
-      None => return Err("El cliente no está emparejado.".into()),
+      None => {
+        println!("[sync] RECHAZO pinning: fingerprint {} no está en peers confiables", fingerprint);
+        return Err("El cliente no está emparejado.".into());
+      }
     }
   };
 

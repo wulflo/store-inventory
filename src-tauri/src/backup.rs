@@ -44,6 +44,20 @@ pub struct BackupResult {
   vault_path: Option<String>,
   files: usize,
   total_bytes: u64,
+  errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultCheckResult {
+  accessible: bool,
+  path: Option<String>,
+  error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultPickResult {
+  path: Option<String>,
+  error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -98,9 +112,31 @@ fn read_vault_path(root: &str) -> Option<String> {
           return Some(vault.trim().to_string());
         }
       }
+      // Soporte SAF URI
+      if let Some(vault) = v.get("backup_vault_uri").and_then(|x| x.as_str()) {
+        if !vault.trim().is_empty() {
+          return Some(vault.trim().to_string());
+        }
+      }
     }
   }
   None
+}
+
+fn is_saf_uri(path: &str) -> bool {
+  path.starts_with("content://")
+}
+
+fn vault_accessible(path: &str) -> bool {
+  #[cfg(target_os = "android")]
+  {
+    if is_saf_uri(path) {
+      return crate::android_fs::vault_is_accessible(path);
+    }
+  }
+  // Escritorio: verificar existencia o creación
+  let p = Path::new(path);
+  p.exists() || fs::create_dir_all(p).is_ok()
 }
 
 fn write_vault_path(root: &str, vault: Option<String>) -> Result<(), String> {
@@ -115,14 +151,20 @@ fn write_vault_path(root: &str, vault: Option<String>) -> Result<(), String> {
     if let Some(v) = &vault {
       if v.trim().is_empty() {
         map.remove("backup_vault_path");
+        map.remove("backup_vault_uri");
       } else {
-        map.insert(
-          "backup_vault_path".to_string(),
-          serde_json::Value::String(v.trim().to_string()),
-        );
+        let trimmed = v.trim().to_string();
+        if is_saf_uri(&trimmed) {
+          map.insert("backup_vault_uri".to_string(), serde_json::Value::String(trimmed));
+          map.remove("backup_vault_path");
+        } else {
+          map.insert("backup_vault_path".to_string(), serde_json::Value::String(trimmed));
+          map.remove("backup_vault_uri");
+        }
       }
     } else {
       map.remove("backup_vault_path");
+      map.remove("backup_vault_uri");
     }
   }
   let s = serde_json::to_string_pretty(&obj).map_err(|e| e.to_string())?;
@@ -212,6 +254,21 @@ pub fn backup_set_vault(root: String, vault: Option<String>) -> Result<(), Strin
 }
 
 #[tauri::command]
+pub fn backup_check_vault(root: String) -> Result<VaultCheckResult, String> {
+  let path = read_vault_path(&root);
+  match path {
+    Some(p) => {
+      if vault_accessible(&p) {
+        Ok(VaultCheckResult { accessible: true, path: Some(p), error: None })
+      } else {
+        Ok(VaultCheckResult { accessible: false, path: Some(p), error: Some("La bóveda no es accesible. Elegí la carpeta de nuevo.".into()) })
+      }
+    }
+    None => Ok(VaultCheckResult { accessible: false, path: None, error: Some("No hay bóveda configurada.".into()) }),
+  }
+}
+
+#[tauri::command]
 pub fn backup_run_daily(app: AppHandle, root: String, force: Option<bool>) -> Result<BackupResult, String> {
   let force = force.unwrap_or(false);
   let date = today_str();
@@ -226,6 +283,7 @@ pub fn backup_run_daily(app: AppHandle, root: String, force: Option<bool>) -> Re
           vault_path: m.vault_path.clone(),
           files: m.files.len(),
           total_bytes: m.total_bytes,
+          errors: Vec::new(),
         });
       }
     }
@@ -291,21 +349,85 @@ pub fn backup_run_daily(app: AppHandle, root: String, force: Option<bool>) -> Re
   let vault_path_str = read_vault_path(&root);
   let mut vault_backup_path: Option<String> = None;
   if let Some(ref vpath) = vault_path_str {
-    let vault_dir = Path::new(vpath);
-    if vault_dir.exists() || fs::create_dir_all(vault_dir).is_ok() {
-      let vault_daily = vault_dir
-        .join("inventario-tienda-backup")
-        .join("devices")
-        .join(&device_id)
-        .join("daily")
-        .join(&date);
-      fs::create_dir_all(&vault_daily).ok();
-      for f in &files_list {
-        let src_f = local_backup_dir.join(&f.name);
-        let dst_f = vault_daily.join(&f.name);
-        let _ = copy_file(&src_f, &dst_f);
+    #[cfg(target_os = "android")]
+    {
+      if is_saf_uri(vpath) {
+        // Android SAF: usar JNI
+        if let Ok(devices_dir) = crate::android_fs::vault_create_dir(vpath, "inventario-tienda-backup") {
+          let mut cur = devices_dir.clone();
+          if let Ok(d) = crate::android_fs::vault_create_dir(&cur, "devices") { cur = d; }
+          if !device_id.is_empty() {
+            if let Ok(d) = crate::android_fs::vault_create_dir(&cur, &device_id) { cur = d; }
+          }
+          if let Ok(d) = crate::android_fs::vault_create_dir(&cur, "daily") { cur = d; }
+          if let Ok(d) = crate::android_fs::vault_create_dir(&cur, &date) { cur = d; }
+          let vault_daily = cur;
+          let mut all_ok = true;
+          for f in &files_list {
+            let src_f = local_backup_dir.join(&f.name);
+            if let Ok(bytes) = fs::read(&src_f) {
+              if crate::android_fs::vault_write_file(&vault_daily, &f.name, &bytes).is_err() {
+                all_ok = false;
+              }
+            } else {
+              all_ok = false;
+            }
+          }
+          if all_ok {
+            vault_backup_path = Some(vault_daily);
+          }
+        }
+      } else {
+        // Android: ruta normal (app data dir)
+        let vault_dir = Path::new(vpath);
+        if vault_dir.exists() || fs::create_dir_all(vault_dir).is_ok() {
+          let vault_daily = vault_dir
+            .join("inventario-tienda-backup")
+            .join("devices")
+            .join(&device_id)
+            .join("daily")
+            .join(&date);
+          if fs::create_dir_all(&vault_daily).is_ok() {
+            let mut all_ok = true;
+            for f in &files_list {
+              let src_f = local_backup_dir.join(&f.name);
+              let dst_f = vault_daily.join(&f.name);
+              if copy_file(&src_f, &dst_f).is_err() {
+                all_ok = false;
+              }
+            }
+            if all_ok {
+              vault_backup_path = Some(vault_daily.to_string_lossy().to_string());
+            }
+          }
+        }
       }
-      vault_backup_path = Some(vault_daily.to_string_lossy().to_string());
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+      // Escritorio: usar fs normal
+      let vault_dir = Path::new(vpath);
+      if vault_dir.exists() || fs::create_dir_all(vault_dir).is_ok() {
+        let vault_daily = vault_dir
+          .join("inventario-tienda-backup")
+          .join("devices")
+          .join(&device_id)
+          .join("daily")
+          .join(&date);
+        if fs::create_dir_all(&vault_daily).is_ok() {
+          let mut all_ok = true;
+          for f in &files_list {
+            let src_f = local_backup_dir.join(&f.name);
+            let dst_f = vault_daily.join(&f.name);
+            if copy_file(&src_f, &dst_f).is_err() {
+              all_ok = false;
+            }
+          }
+          if all_ok {
+            vault_backup_path = Some(vault_daily.to_string_lossy().to_string());
+          }
+        }
+      }
     }
   }
 
@@ -331,12 +453,32 @@ pub fn backup_run_daily(app: AppHandle, root: String, force: Option<bool>) -> Re
   }
 
   let _ = app;
+  let mut errors: Vec<String> = Vec::new();
+  if let Some(ref vpath) = vault_path_str {
+    let vault_dir = Path::new(vpath);
+    if !vault_dir.exists() && fs::create_dir_all(vault_dir).is_err() {
+      errors.push(format!("No se pudo crear/acceder a la bóveda externa: {}", vpath));
+    }
+  }
+  // Verificar cada archivo copiado a la bóveda
+  if vault_path_str.is_some() && vault_backup_path.is_none() {
+    errors.push("No se pudo escribir en la bóveda externa (¿permiso denegado o carpeta inaccesible?)".to_string());
+  } else if let Some(ref vbp) = vault_backup_path {
+    for f in &files_list {
+      let dst = Path::new(vbp).join(&f.name);
+      if !dst.exists() {
+        errors.push(format!("No se pudo copiar {} a la bóveda", f.name));
+      }
+    }
+  }
+
   Ok(BackupResult {
     date,
     local_path: local_backup_dir.to_string_lossy().to_string(),
     vault_path: vault_backup_path,
     files: files_list.len(),
     total_bytes,
+    errors,
   })
 }
 
@@ -476,4 +618,77 @@ pub fn backup_pull_from_vault(app: AppHandle, root: String) -> Result<BackupPull
     added_lines,
     scanned_devices,
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn is_saf_uri_detects_content_scheme() {
+    assert!(is_saf_uri("content://com.android.externalstorage.documents/tree/primary:Download"));
+    assert!(!is_saf_uri("/home/user/backup"));
+    assert!(!is_saf_uri("C:\\\\backup"));
+  }
+
+  #[test]
+  fn read_vault_path_returns_none_when_no_settings() {
+    let tmp = std::env::temp_dir().join("backup_test_no_settings");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let root = tmp.to_string_lossy().to_string();
+    assert!(read_vault_path(&root).is_none());
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn read_vault_path_reads_vault_path() {
+    let tmp = std::env::temp_dir().join("backup_test_read");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let root = tmp.to_string_lossy().to_string();
+    let settings = serde_json::json!({ "backup_vault_path": "/tmp/vault" });
+    std::fs::write(tmp.join("settings.json"), serde_json::to_string(&settings).unwrap()).unwrap();
+    assert_eq!(read_vault_path(&root), Some("/tmp/vault".to_string()));
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn read_vault_path_reads_saf_uri() {
+    let tmp = std::env::temp_dir().join("backup_test_saf");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let root = tmp.to_string_lossy().to_string();
+    let uri = "content://com.android.externalstorage.documents/tree/primary:Download";
+    let settings = serde_json::json!({ "backup_vault_uri": uri });
+    std::fs::write(tmp.join("settings.json"), serde_json::to_string(&settings).unwrap()).unwrap();
+    assert_eq!(read_vault_path(&root), Some(uri.to_string()));
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn write_vault_path_persists() {
+    let tmp = std::env::temp_dir().join("backup_test_write");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let root = tmp.to_string_lossy().to_string();
+    write_vault_path(&root, Some("/tmp/myvault".to_string())).unwrap();
+    assert_eq!(read_vault_path(&root), Some("/tmp/myvault".to_string()));
+    write_vault_path(&root, None).unwrap();
+    assert!(read_vault_path(&root).is_none());
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  #[test]
+  fn vault_accessible_checks_desktop_path() {
+    let tmp = std::env::temp_dir().join("backup_test_accessible");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let p = tmp.to_string_lossy().to_string();
+    assert!(vault_accessible(&p));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let p2 = std::env::temp_dir().join("backup_test_accessible2").to_string_lossy().to_string();
+    assert!(vault_accessible(&p2));
+    let _ = std::fs::remove_dir_all(&p2);
+  }
 }

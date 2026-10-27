@@ -10,6 +10,7 @@ import { APP_VERSION } from '../../core/version';
 import { ACCENTS, applyTheme, normalizeAccent, normalizeTheme, type AccentId, type ThemeName } from '../theme';
 import { settingsSyncCard } from './settingsSync';
 import { settingsUpdatesCard } from './settingsUpdates';
+import { settingsAutoSyncCard } from './settingsAutoSync';
 
 export function settingsView(app: App, shell: Shell): HTMLElement {
   const view = el('div');
@@ -268,6 +269,7 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
 
   /* ---------------- Actualizaciones ---------------- */
   view.appendChild(settingsUpdatesCard());
+  view.appendChild(settingsAutoSyncCard(app));
 
   return view;
 }

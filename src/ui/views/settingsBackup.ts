@@ -25,9 +25,11 @@ export function settingsBackupView(root: HTMLElement, store: TauriEventStore): v
         el('div', { id: 'backup-status', class: 'stack' }, [
           el('p', { class: 'muted' }, 'Cargando...'),
         ]),
+        el('div', { id: 'backup-errors', class: 'stack' }, []),
         el('div', { class: 'row' }, [
           el('button', { class: 'btn', id: 'backup-run' }, 'Crear/actualizar respaldo de hoy'),
           el('button', { class: 'btn btn-ghost', id: 'backup-run-force' }, 'Forzar nuevo respaldo'),
+          el('button', { class: 'btn btn-ghost', id: 'backup-pull' }, 'Restaurar desde la bóveda'),
         ]),
       ]),
     ]),
@@ -44,7 +46,7 @@ export function settingsBackupView(root: HTMLElement, store: TauriEventStore): v
           el('input', { id: 'vault-path', class: 'input', placeholder: '/ruta/a/carpeta-compartida' }),
         ]),
         el('div', { class: 'row' }, [
-          el('button', { class: 'btn', id: 'vault-save' }, 'Guardar ruta'),
+          el('button', { class: 'btn', id: 'vault-pick' }, 'Elegir carpeta de bóveda'),
           el('button', { class: 'btn btn-ghost', id: 'vault-clear' }, 'Quitar bóveda'),
         ]),
         el('p', { class: 'muted', style: 'font-size:12px' }, 'Los respaldos se guardan en: <datos>/backups/daily/YYYY-MM-DD/ y, si hay bóveda externa, también en: <bóveda>/inventario-tienda-backup/daily/YYYY-MM-DD/'),
@@ -75,6 +77,12 @@ export function settingsBackupView(root: HTMLElement, store: TauriEventStore): v
         el('div', {}, [el('strong', {}, 'Bóveda accesible: '), el('span', {}, st.has_vault ? 'Sí' : st.vault_path ? 'No (ruta no existe)' : 'No')]),
       ];
       items.forEach((i) => statusEl.appendChild(i));
+
+      // Mostrar errores del backup anterior si existen
+      const errorsEl = document.getElementById('backup-errors');
+      if (errorsEl) {
+        errorsEl.innerHTML = '';
+      }
       const input = document.getElementById('vault-path') as HTMLInputElement | null;
       if (input && st.vault_path) input.value = st.vault_path;
     } catch (e: any) {
@@ -89,7 +97,11 @@ export function settingsBackupView(root: HTMLElement, store: TauriEventStore): v
       const root = store.getRoot();
       if (!root) return toast('Sin carpeta de datos', { kind: 'error' });
       const res: any = await invoke('backup_run_daily', { root, force: false });
-      toast(`Respaldo ${res.date} creado (${res.files} archivos)`, { kind: 'success' });
+      if (res.errors && res.errors.length > 0) {
+        toast(`Respaldo ${res.date} con errores: ${res.errors.join(', ')}`, { kind: 'error' });
+      } else {
+        toast(`Respaldo ${res.date} creado (${res.files} archivos)`, { kind: 'success' });
+      }
       await refresh();
     } catch (e: any) {
       toast(e?.message || String(e), { kind: 'error' });
@@ -103,27 +115,60 @@ export function settingsBackupView(root: HTMLElement, store: TauriEventStore): v
       const root = store.getRoot();
       if (!root) return toast('Sin carpeta de datos', { kind: 'error' });
       const res: any = await invoke('backup_run_daily', { root, force: true });
-      toast(`Respaldo ${res.date} regenerado (${res.files} archivos)`, { kind: 'success' });
+      if (res.errors && res.errors.length > 0) {
+        toast(`Respaldo ${res.date} con errores: ${res.errors.join(', ')}`, { kind: 'error' });
+      } else {
+        toast(`Respaldo ${res.date} regenerado (${res.files} archivos)`, { kind: 'success' });
+      }
       await refresh();
     } catch (e: any) {
       toast(e?.message || String(e), { kind: 'error' });
     }
   });
 
-  document.getElementById('vault-save')?.addEventListener('click', async () => {
+  document.getElementById('vault-pick')?.addEventListener('click', async () => {
     if (!isTauri()) return;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+      const { open } = await import('@tauri-apps/plugin-dialog');
       const root = store.getRoot();
       if (!root) return toast('Sin carpeta de datos', { kind: 'error' });
-      const input = document.getElementById('vault-path') as HTMLInputElement;
-      await invoke('backup_set_vault', { root, vault: input.value.trim() || null });
-      toast('Ruta de bóveda guardada', { kind: 'success' });
+      const picked = await open({ directory: true, multiple: false, title: 'Elegir carpeta de bóveda' });
+      if (!picked) return;
+      const path = Array.isArray(picked) ? picked[0] : picked;
+      if (!path) return;
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('backup_set_vault', { root, vault: path });
+      toast('Bóveda guardada', { kind: 'success' });
       await refresh();
     } catch (e: any) {
       toast(e?.message || String(e), { kind: 'error' });
     }
   });
+
+  // Verificar accesibilidad al cargar
+  const checkVault = async () => {
+    if (!isTauri()) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const root = store.getRoot();
+      if (!root) return;
+      const res: any = await invoke('backup_check_vault', { root });
+      const errorsEl = document.getElementById('backup-errors');
+      if (errorsEl) {
+        errorsEl.innerHTML = '';
+        if (res.path && !res.accessible) {
+          const warn = el('div', { class: 'card', style: 'border-color: var(--danger); padding: 8px;' }, [
+            el('p', { style: 'color: var(--danger); margin: 0;' }, res.error || 'La bóveda no es accesible.'),
+            el('button', { class: 'btn btn-ghost', style: 'margin-top: 4px;', on: { click: () => document.getElementById('vault-pick')?.click() } }, 'Elegir carpeta de nuevo'),
+          ]);
+          errorsEl.appendChild(warn);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  };
+  void checkVault();
 
   document.getElementById('vault-clear')?.addEventListener('click', async () => {
     if (!isTauri()) return;
@@ -136,6 +181,22 @@ export function settingsBackupView(root: HTMLElement, store: TauriEventStore): v
       if (input) input.value = '';
       toast('Bóveda externa eliminada', { kind: 'success' });
       await refresh();
+    } catch (e: any) {
+      toast(e?.message || String(e), { kind: 'error' });
+    }
+  });
+
+  document.getElementById('backup-pull')?.addEventListener('click', async () => {
+    if (!isTauri()) return;
+    const ok = confirm('¿Restaurar datos desde la bóveda? Se fusionarán los eventos nuevos sin pisar los existentes.');
+    if (!ok) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const root = store.getRoot();
+      if (!root) return toast('Sin carpeta de datos', { kind: 'error' });
+      const res: any = await invoke('backup_pull_from_vault', { root });
+      toast(`Restaurados ${res.added_lines} eventos nuevos de ${res.scanned_devices} dispositivo(s)`, { kind: 'success' });
+      window.location.reload();
     } catch (e: any) {
       toast(e?.message || String(e), { kind: 'error' });
     }

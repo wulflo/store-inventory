@@ -105,6 +105,25 @@ async function boot(): Promise<void> {
         .then(() => window.dispatchEvent(new CustomEvent('inventario:sync-updated')))
         .catch((err) => console.error('No se pudo recargar tras sincronizar', err));
     });
+
+    // Auto-sync
+    try {
+      const { loadConfig, refreshBattery, startAutoSync } = await import('./sync/autoSync');
+      (window as any).__storeRoot = (store as TauriEventStore).getRoot();
+      await loadConfig();
+      await refreshBattery();
+      startAutoSync();
+      // Auto-backup al abrir si no hay backup de hoy
+      const { invoke } = await import('@tauri-apps/api/core');
+      const root = (store as TauriEventStore).getRoot();
+      if (root) {
+        const cfg = await invoke<any>('sync_auto_get', { root });
+        // backup automático respetando modo
+        invoke('backup_run_daily', { root, force: false }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Auto-sync init falló', e);
+    }
   }
 
   document.getElementById('boot')?.remove();
