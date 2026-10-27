@@ -96,7 +96,7 @@ fn decode_signature(value: &str) -> String {
   }
 }
 
-fn verify_apk(bytes: &[u8], signature: &str) -> Result<(), String> {
+fn verify_release_signature(bytes: &[u8], signature: &str) -> Result<(), String> {
   let pubkey_text = STANDARD
     .decode(UPDATE_PUBKEY)
     .map_err(|e| format!("Clave pública del updater inválida: {e}"))?;
@@ -106,10 +106,10 @@ fn verify_apk(bytes: &[u8], signature: &str) -> Result<(), String> {
   .map_err(|e| format!("Clave pública minisign inválida: {e}"))?;
   let signature_text = decode_signature(signature);
   let signature =
-    Signature::decode(&signature_text).map_err(|e| format!("Firma del APK inválida: {e}"))?;
+    Signature::decode(&signature_text).map_err(|e| format!("Firma del archivo inválida: {e}"))?;
   public_key
     .verify(bytes, &signature, true)
-    .map_err(|e| format!("La firma del APK no es válida: {e}"))
+    .map_err(|e| format!("La firma del archivo no es válida: {e}"))
 }
 
 /* ----------------------------- Común ------------------------------ */
@@ -208,7 +208,7 @@ async fn android_install() -> Result<String, String> {
   if bytes.len() > 300 * 1024 * 1024 {
     return Err("El APK descargado es demasiado grande.".into());
   }
-  verify_apk(&bytes, &platform.signature)?;
+  verify_release_signature(&bytes, &platform.signature)?;
 
   let file_name = format!("Inventario-Tienda-v{}.apk", manifest.version);
   let saved = crate::android_fs::save_to_downloads(
@@ -297,7 +297,7 @@ async fn desktop_manual_install(app: &AppHandle) -> Result<String, String> {
     return Err("El instalador descargado está vacío o incompleto.".into());
   }
   if verify {
-    verify_apk(&bytes, &platform.signature)?;
+    verify_release_signature(&bytes, &platform.signature)?;
   }
 
   let downloads = app
