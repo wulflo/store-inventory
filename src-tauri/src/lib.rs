@@ -6,10 +6,7 @@ mod updater;
 #[cfg(target_os = "android")]
 mod android_fs;
 
-use event_store::{
-  store_append, store_device_id, store_ensure_layout, store_mtimes, store_read, AppendArgs,
-  DeviceIdArgs, MtimesArgs, ReadArgs,
-};
+use event_store::{store_append, store_device_id, store_ensure_layout, store_mtimes, store_read};
 use serde::Serialize;
 use sync::manager::{IdentityInfo, SyncBatchResult, SyncLocalInfo, SyncManager};
 use sync::pairing::PendingPairing;
@@ -225,6 +222,9 @@ pub fn run() {
       updater::cmd_updater_check,
       updater::cmd_updater_install,
       store_space_info,
+      backup::backup_status,
+      backup::backup_set_vault,
+      backup::backup_run_daily,
     ])
     .run(tauri::generate_context!())
     .expect("error al ejecutar Inventario Tienda");
@@ -238,3 +238,5 @@ pub fn run() {
 fn store_space_info() -> Result<serde_json::Value, String> {
   Ok(serde_json::json!({ "ok": true }))
 }
+
+mod backup;

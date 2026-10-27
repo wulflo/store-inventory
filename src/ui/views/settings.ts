@@ -168,6 +168,11 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
             type: 'button',
             on: { click: () => shell.router.navigate('/importar') },
           }, icon('orders', 18), 'Importar CSV'),
+          el('button', {
+            class: 'btn btn-ghost',
+            type: 'button',
+            on: { click: (e: Event) => { e.preventDefault(); shell.router.navigate('/respaldos'); } },
+          }, icon('settings', 18), 'Respaldos diarios'),
         ),
       ),
     }),

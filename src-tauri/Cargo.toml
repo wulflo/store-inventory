@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4", features = ["clock", "serde"] }
 # Sincronización P2P cifrada LAN.
 # Usamos el proveedor `ring` de rustls de forma explícita para que la
 # verificación de certificados fijados (pinning) sea determinista y no dependa

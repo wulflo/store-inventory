@@ -2004,19 +2004,20 @@ table.data td.num {
 /* --- Tabla de talles × colores --- */
 .variant-grid {
   overflow-x: auto;
+  overflow-y: visible;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
 }
 .variant-grid table {
   width: 100%;
-  min-width: 420px;
+  min-width: 340px;
   border-collapse: collapse;
   font-size: var(--fs-sm);
 }
 .variant-grid th,
 .variant-grid td {
-  padding: var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border-bottom: 1px solid var(--border);
   text-align: center;
   vertical-align: middle;
@@ -2037,9 +2038,9 @@ table.data td.num {
   white-space: nowrap;
 }
 .qty-input {
-  width: 64px;
+  width: 68px;
   height: 40px;
-  padding: 0 var(--space-1);
+  padding: 0 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -2047,6 +2048,8 @@ table.data td.num {
   text-align: center;
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  box-sizing: border-box;
 }
 .qty-input:focus {
   outline: none;

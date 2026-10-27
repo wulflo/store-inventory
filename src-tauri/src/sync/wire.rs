@@ -22,6 +22,12 @@ pub struct EventsPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdListPayload {
+  pub domain: String,
+  pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorPayload {
   pub message: String,
 }

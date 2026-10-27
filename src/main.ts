@@ -25,6 +25,7 @@ import { customersView, customerDetailView } from './ui/views/customers';
 import { expensesView } from './ui/views/expenses';
 import { reportsView } from './ui/views/reports';
 import { settingsView } from './ui/views/settings';
+import { settingsBackupView } from './ui/views/settingsBackup';
 import { importCsvView } from './ui/views/importCsv';
 
 /* ------------------------------------------------------------------ */
@@ -179,6 +180,17 @@ function registerRoutes(app: App, shell: Shell): void {
   r.add('/reportes', show(() => reportsView(app, shell), 'Reportes'));
   r.add('/ajustes', show(() => settingsView(app, shell), 'Ajustes'));
   r.add('/importar', show(() => importCsvView(app, shell), 'Importar datos'));
+  r.add('/respaldos', () => {
+    const store = (app as any).store;
+    shell.setTitle('Respaldos diarios');
+    if (store && typeof store.getRoot === 'function') {
+      const elHost = el('div');
+      mount(shell.outlet, elHost);
+      settingsBackupView(elHost, store);
+      return;
+    }
+    mount(shell.outlet, settingsView(app, shell));
+  });
 
   r.notFound(() => {
     shell.setTitle('No encontrado');

@@ -90,11 +90,11 @@ pub fn store_ensure_layout(root: String) -> Result<(), String> {
 
 /** Agrega líneas al final de un archivo de dominio (append-only real). */
 #[tauri::command]
-pub fn store_append(args: AppendArgs) -> Result<(), String> {
-  if args.lines.is_empty() {
+pub fn store_append(root: String, domain: String, lines: Vec<String>) -> Result<(), String> {
+  if lines.is_empty() {
     return Ok(());
   }
-  let path = domain_path(&args.root, &args.domain);
+  let path = domain_path(&root, &domain);
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent).map_err(|e| format!("No se pudo crear la carpeta de eventos: {e}"))?;
   }
@@ -104,7 +104,7 @@ pub fn store_append(args: AppendArgs) -> Result<(), String> {
     .append(true)
     .open(&path)
     .map_err(|e| format!("No se pudo abrir el archivo de dominio para escritura: {e}"))?;
-  for line in &args.lines {
+  for line in &lines {
     if !line.is_empty() {
       writeln!(file, "{line}").map_err(|e| format!("Error escribiendo en el archivo de dominio: {e}"))?;
     }
@@ -115,8 +115,8 @@ pub fn store_append(args: AppendArgs) -> Result<(), String> {
 
 /** Lee todo el contenido de un archivo de dominio. Devuelve cadena vacía si no existe. */
 #[tauri::command]
-pub fn store_read(args: ReadArgs) -> Result<String, String> {
-  let path = domain_path(&args.root, &args.domain);
+pub fn store_read(root: String, domain: String) -> Result<String, String> {
+  let path = domain_path(&root, &domain);
   match fs::read_to_string(&path) {
     Ok(text) => Ok(text),
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -126,8 +126,8 @@ pub fn store_read(args: ReadArgs) -> Result<String, String> {
 
 /** Devuelve los mtimes (ms epoch) de cada archivo de dominio, para detectar cambios externos (Syncthing/Drive). */
 #[tauri::command]
-pub fn store_mtimes(args: MtimesArgs) -> Result<Value, String> {
-  let dir = events_dir(&args.root);
+pub fn store_mtimes(root: String) -> Result<Value, String> {
+  let dir = events_dir(&root);
   let domains = [
     "collections", "products", "colors", "variants", "customers", "orders",
     "order_lines", "payments", "production_orders", "production_lines",
@@ -149,8 +149,8 @@ pub fn store_mtimes(args: MtimesArgs) -> Result<Value, String> {
 
 /** Lee o genera el identificador de dispositivo persistido junto a los datos. */
 #[tauri::command]
-pub fn store_device_id(args: DeviceIdArgs) -> Result<String, String> {
-  let path = device_id_path(&args.root);
+pub fn store_device_id(root: String) -> Result<String, String> {
+  let path = device_id_path(&root);
   if let Ok(existing) = fs::read_to_string(&path) {
     let trimmed = existing.trim();
     if !trimmed.is_empty() {

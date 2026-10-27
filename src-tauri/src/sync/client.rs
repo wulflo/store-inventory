@@ -5,7 +5,7 @@ use crate::sync::peer::Peer;
 use crate::sync::protocol::{batch_events, diff_summaries, validate_incoming_event, SyncSummary};
 use crate::sync::store::{append_missing, load_all, summaries_for};
 use crate::sync::tls;
-use crate::sync::wire::{read_json, write_json, EventsPayload, SyncHello, SyncReport};
+use crate::sync::wire::{read_json, write_json, EventsPayload, IdListPayload, SyncHello, SyncReport};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::CertificateDer;
 use std::collections::BTreeSet;
@@ -111,39 +111,71 @@ pub async fn sync_peer(
 
     let diff = diff_summaries(&local_summary.summaries, &remote_summary.summaries);
     let mut sent = 0usize;
+    let mut received = 0usize;
     let mut domains = BTreeSet::new();
+    let now = now_ms();
 
-    // Enviamos el historial completo de los dominios divergentes. El receptor
-    // deduplica por id, así que reenviar es seguro e idempotente.
-    for domain in diff.keys() {
-      let events = local_all.get(domain).cloned().unwrap_or_default();
-      if events.is_empty() {
-        continue;
+    // Enviar lista de IDs que YA tenemos por dominio (sincronización por delta)
+    let mut domains_to_consider: Vec<String> = local_all.keys().cloned().collect();
+    for d in diff.keys() {
+      if !domains_to_consider.contains(d) {
+        domains_to_consider.push(d.clone());
       }
-      for batch in batch_events(domain, &events) {
+    }
+    domains_to_consider.sort();
+
+    for domain in &domains_to_consider {
+      let events = local_all.get(domain).cloned().unwrap_or_default();
+      let ids: Vec<String> = events.iter().map(|e| e.id.clone()).collect();
+      if !ids.is_empty() {
         write_json(
           &mut stream,
-          FrameType::Events,
-          &EventsPayload {
-            domain: batch.domain.clone(),
-            events: batch.events.clone(),
+          FrameType::IdList,
+          &IdListPayload {
+            domain: domain.clone(),
+            ids,
           },
         )
         .await?;
-        sent += batch.events.len();
-        domains.insert(batch.domain);
       }
     }
 
-    write_json(&mut stream, FrameType::Bye, &serde_json::json!({})).await?;
-
-    let mut received = 0usize;
-    let now = now_ms();
+    // Procesar IdList del servidor y enviar SOLO los eventos que le falten
     loop {
       let frame = read_frame_async(&mut stream)
         .await
         .map_err(|e| format!("Error leyendo del peer: {e}"))?;
       match frame.r#type {
+        FrameType::IdList => {
+          let list: IdListPayload = serde_json::from_slice(&frame.payload)
+            .map_err(|e| format!("IdList inválido: {e}"))?;
+          if list.domain.is_empty() {
+            continue;
+          }
+          let remote_ids: BTreeSet<String> = list.ids.into_iter().collect();
+          let local_events = local_all.get(&list.domain).cloned().unwrap_or_default();
+          let mut to_send: Vec<crate::sync::store_types::DomainEvent> = Vec::new();
+          for ev in local_events {
+            if !remote_ids.contains(&ev.id) {
+              to_send.push(ev);
+            }
+          }
+          if !to_send.is_empty() {
+            for batch in batch_events(&list.domain, &to_send) {
+              write_json(
+                &mut stream,
+                FrameType::Events,
+                &EventsPayload {
+                  domain: batch.domain.clone(),
+                  events: batch.events.clone(),
+                },
+              )
+              .await?;
+              sent += batch.events.len();
+              domains.insert(batch.domain.clone());
+            }
+          }
+        }
         FrameType::Events => {
           let payload: EventsPayload = serde_json::from_slice(&frame.payload)
             .map_err(|e| format!("Lote de eventos inválido: {e}"))?;
@@ -168,7 +200,7 @@ pub async fn sync_peer(
         }
         FrameType::Bye => break,
         FrameType::KeepAlive | FrameType::Summary | FrameType::BatchAck => {}
-        FrameType::Handshake | FrameType::IdList => {
+        FrameType::Handshake => {
           return Err("Frame inesperado durante la sincronización.".into());
         }
         FrameType::Error => {

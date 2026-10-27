@@ -107,3 +107,12 @@ Estado: Implementado con restricciones estrictas
 
 ## Cómo replicar en otro proyecto
 Ver `docs/security/SYNC_PROTOCOL_REPLICABLE.md`
+
+
+## Actualización: Revisión de seguridad real (2026-10-27)
+
+Ver [SECURITY_REVIEW_2026-10-27.md](./SECURITY_REVIEW_2026-10-27.md) para auditoría completa con hallazgos, correcciones aplicadas y recomendaciones.
+
+**Correcciones aplicadas:**
+- Eliminado fallback UDP a 8.8.8.8 en `local_lan_addresses()` (sin tráfico a Internet)
+- Añadida revisión exhaustiva documentada

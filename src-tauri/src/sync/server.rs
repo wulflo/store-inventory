@@ -7,7 +7,7 @@ use crate::sync::protocol::{batch_events, diff_summaries, validate_incoming_even
 use crate::sync::store::{append_missing, load_all, summaries_for};
 use crate::sync::tls;
 use crate::sync::wire::{
-  read_json, send_error, write_json, EventsPayload, SyncHello, SyncReport,
+  read_json, send_error, write_json, EventsPayload, IdListPayload, SyncHello, SyncReport,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -196,27 +196,89 @@ async fn serve_authenticated(
   let diff = diff_summaries(&client_summary.summaries, &local_summary.summaries);
   let now = now_ms();
   let mut received = 0usize;
+  let mut sent = 0usize;
   let mut domains = std::collections::BTreeSet::new();
+
+  // Enviar lista de IDs que YA tenemos por dominio
+  let mut domains_to_consider: Vec<String> = local_all.keys().cloned().collect();
+  for d in diff.keys() {
+    if !domains_to_consider.contains(d) {
+      domains_to_consider.push(d.clone());
+    }
+  }
+  domains_to_consider.sort();
+
+  for domain in &domains_to_consider {
+    let events = local_all.get(domain).cloned().unwrap_or_default();
+    let ids: Vec<String> = events.iter().map(|e| e.id.clone()).collect();
+    if !ids.is_empty() {
+      write_json(
+        stream,
+        FrameType::IdList,
+        &IdListPayload {
+          domain: domain.clone(),
+          ids,
+        },
+      )
+      .await?;
+    }
+  }
 
   loop {
     let frame = read_frame_async(stream)
       .await
       .map_err(|e| format!("Error leyendo del cliente: {e}"))?;
     match frame.r#type {
+      FrameType::IdList => {
+        let list: IdListPayload = serde_json::from_slice(&frame.payload)
+          .map_err(|e| format!("IdList inválido: {e}"))?;
+        if list.domain.is_empty() {
+          continue;
+        }
+        let client_ids: std::collections::BTreeSet<String> = list.ids.into_iter().collect();
+        let local_events = local_all.get(&list.domain).cloned().unwrap_or_default();
+        let mut to_send: Vec<crate::sync::store_types::DomainEvent> = Vec::new();
+        for ev in local_events {
+          if !client_ids.contains(&ev.id) {
+            to_send.push(ev);
+          }
+        }
+        if !to_send.is_empty() {
+          for batch in batch_events(&list.domain, &to_send) {
+            write_json(
+              stream,
+              FrameType::Events,
+              &EventsPayload {
+                domain: batch.domain.clone(),
+                events: batch.events.clone(),
+              },
+            )
+            .await?;
+            sent += batch.events.len();
+            domains.insert(batch.domain.clone());
+          }
+        }
+      }
       FrameType::Events => {
         let payload: EventsPayload = serde_json::from_slice(&frame.payload)
           .map_err(|e| format!("Lote de eventos inválido: {e}"))?;
         if payload.events.len() > crate::sync::framing::MAX_BATCH_EVENTS {
+          send_error(stream, "Demasiados eventos en un lote").await;
           return Err("El cliente envió demasiados eventos en un lote.".into());
         }
         for ev in &payload.events {
-          validate_incoming_event(ev, now, FUTURE_TOLERANCE_MS)?;
+          if let Err(msg) = validate_incoming_event(ev, now, FUTURE_TOLERANCE_MS) {
+            send_error(stream, &msg).await;
+            return Err(msg);
+          }
           if ev.domain() != payload.domain {
-            return Err(format!(
+            let msg = format!(
               "El cliente envió un evento del dominio {} en el lote {}",
               ev.domain(),
               payload.domain
-            ));
+            );
+            send_error(stream, &msg).await;
+            return Err(msg);
           }
         }
         let added = append_missing(root, &payload.domain, &payload.events)?;
@@ -233,30 +295,10 @@ async fn serve_authenticated(
           .unwrap_or_else(|_| "Error remoto desconocido".into());
         return Err(msg);
       }
-      FrameType::Handshake | FrameType::Summary | FrameType::IdList => {
+      FrameType::Handshake | FrameType::Summary => {
+        send_error(stream, "Frame inesperado durante la sincronización").await;
         return Err("Frame inesperado durante la sincronización.".into());
       }
-    }
-  }
-
-  let mut sent = 0usize;
-  for domain in diff.keys() {
-    let events = local_all.get(domain).cloned().unwrap_or_default();
-    if events.is_empty() {
-      continue;
-    }
-    for batch in batch_events(domain, &events) {
-      write_json(
-        stream,
-        FrameType::Events,
-        &EventsPayload {
-          domain: batch.domain.clone(),
-          events: batch.events.clone(),
-        },
-      )
-      .await?;
-      sent += batch.events.len();
-      domains.insert(batch.domain);
     }
   }
   write_json(stream, FrameType::Bye, &serde_json::json!({})).await?;

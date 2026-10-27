@@ -88,17 +88,6 @@ pub fn local_lan_addresses() -> Vec<String> {
       }
     }
   }
-  if out.is_empty() {
-    // Fallback sin tráfico: un connect() UDP no envía paquetes y permite
-    // descubrir la IP de salida incluso en redes con getifaddrs restringido.
-    if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
-      if sock.connect("8.8.8.8:80").is_ok() {
-        if let Ok(local) = sock.local_addr() {
-          out.push(local.ip().to_string());
-        }
-      }
-    }
-  }
   out
 }
 
