@@ -57,12 +57,12 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
   arm64 compilados y firmados con la keystore de debug.
 - **Verificado en emulador Android 35 x86_64 (320×640, KVM):** arranque, dashboard,
   navegación, tema claro/oscuro y persistencia. Datos en
-  `/data/user/0/com.inventariotienda.app/events`: 13 archivos, 313 líneas antes y
-  después de force-stop/reapertura.
+  `/data/user/0/com.inventariotienda.app/events`: 13 archivos, 315 líneas (313
+  del seed + 2 `Setting.Set` de tema) antes y después de force-stop/reapertura.
 - **Release firmado:** `app/build.gradle.kts` lee `keystore.properties` y configura
-  `signingConfigs.release`. APK release arm64 de 13 MB firmado con el certificado
-  release; APK release x86_64 instalado en emulador, con 313 eventos que
-  sobreviven al reinicio.
+  `signingConfigs.release`. APK universal del CI (39.923.555 B, 4 ABIs) firmado
+  con el certificado release e instalado en emulador; los 315 eventos sobreviven
+  a `adb install -r` y al reinicio.
 
 ### Fase 2 — P2P cifrado LAN (PARCIAL — núcleo implementado, transporte esqueleto)
 - Núcleo implementado y testeado (15 tests Rust): identidad (Ed25519 + cert
@@ -89,15 +89,21 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
   y `bundle.createUpdaterArtifacts: true`.
 - `scripts/latest-json.mjs` genera el manifiesto real desde los `.sig`.
   Soporta los artefactos directos de Tauri v2 (`AppImage`, `.exe`, `.msi`) y los
-  formatos v1 (`.AppImage.tar.gz`, `.nsis.zip`, `.msi.zip`), con tests.
-- Se compiló un AppImage Linux real (82,45 MiB) y su `.sig` de 452 bytes, y se
-  generó `latest.json` con ese artefacto local.
+  formatos v1 (`.AppImage.tar.gz`, `.nsis.zip`, `.msi.zip`), con 8 tests.
+- El release dry-run `40484612737` generó desde artefactos reales del CI:
+  AppImage 83.683.832 B + `.sig` 452 B, NSIS 3.622.879 B + `.sig` 448 B, MSI
+  5.488.640 B + `.sig` 448 B y `latest.json` de 1.373 B. Las firmas del
+  manifiesto coinciden con los `.sig`.
+- GitHub reemplaza los espacios del nombre del asset por puntos; el script
+  normaliza la URL (`Inventario.Tienda…`) para evitar un 404 del updater.
 - Claves generadas y secretos cargados en el Environment `release` de GitHub.
   Ver `docs/RELEASE.md`.
-- **Pendiente:** probar una actualización real contra un release publicado.
+- El draft `v1.0.0` (`isDraft: true`, sin tag público) no alimenta
+  `releases/latest`; el endpoint real todavía devuelve 404.
+- **Pendiente:** publicar el release y probar una actualización real.
 
 ### Fase 6 — CI/CD
-- `ci.yml`: typecheck, 44 tests vitest, `cargo test` (15), builds Linux/Windows
+- `ci.yml`: typecheck, 45 tests vitest, `cargo test` (15), builds Linux/Windows
   con `--no-bundle`, y APK Android debug arm64. `cargo fmt --check` y `clippy`
   son informativos (`continue-on-error`) porque el código todavía tiene formato
   de 2 espacios y warnings; no se oculta el resultado.
@@ -112,10 +118,14 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - **Android SDK en CI:** se dejó de usar `android-actions/setup-android@v3`
   porque intenta instalar el paquete `tools`, retirado del repositorio de Google.
   El workflow usa el SDK preinstalado del runner y `sdkmanager` directo.
-- **Release workflow:** todavía no ejecutado. `workflow_dispatch` devuelve 404
-  mientras `release.yml` no exista en la rama default `main`; la rama feature
-  todavía no está mergeada. Queda pendiente el dry-run firmado con artefactos
-  Linux/Windows/Android y `latest.json`, o disparar un tag `v1.0.0`.
+- **Release workflow:** ejecutado en `main` con `workflow_dispatch` y
+  `dry-run=true`. Run `40484612737`: `verify`, `build-linux`, `build-windows`,
+  `build-android` y `publish` en verde. Creó el draft `v1.0.0` con 10 assets
+  firmados y `latest.json`; **no** publicó ni creó tag público.
+- Todos los jobs que consumen secretos (`build-linux`, `build-windows`,
+  `build-android`, `publish`) declaran `environment: release`. Sin esa
+  declaración GitHub entrega los secretos vacíos y la firma falla con
+  `Missing comment in secret key`.
 
 ### Hotfix de auditoría de UI y persistencia (fase 1/7)
 - **Pérdida de datos en navegador:** `WebEventStore.append` usaba `createWritable()` sin `keepExistingData`, que trunca el `.jsonl` en cada escritura. Ahora escribe al final con posición explícita y tiene fallback de reescritura. Regresión cubierta en `tests/store.test.ts`.
@@ -133,6 +143,15 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - **Bottom nav Android:** `.layout` medía `100vh` y empujaba la barra inferior
   fuera de la pantalla. `#root` es flex column con `100dvh`; `.layout` ocupa el
   espacio restante y la nav queda visible.
+- **Raíz de `scripts/version.mjs`:** calculaba `ROOT` desde `import.meta.url`
+  sin subir un nivel y apuntaba a `scripts/`; el workflow de release no podía
+  leer `package.json`. Ahora usa `fileURLToPath(new URL('..', import.meta.url))`.
+- **Secretos del release:** los jobs de build no declaraban
+  `environment: release`, por lo que `TAURI_SIGNING_PRIVATE_KEY` y el keystore
+  Android llegaban vacíos. Se agregó el environment a los tres builds.
+- **Nombres de assets:** GitHub reemplaza espacios por puntos al subir; el
+  manifiesto usaba `%20` y hubiera dado 404. `latest-json.mjs` normaliza el
+  nombre y el test lo cubre.
 
 ## Identificador definitivo (fase 3)
 - `identifier` / `applicationId`: `com.inventariotienda.app` (definido en
@@ -150,5 +169,8 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
   cargados en el Environment `release`.
 - Certificado Authenticode para Windows (hoy se publica sin firmar; SmartScreen
   puede advertir).
-- Probar el APK en emulador/dispositivo y el release firmado en GitHub.
+- Publicar el draft `v1.0.0` y probar el updater contra `releases/latest`.
+- Probar el APK universal/arm64 en un dispositivo físico.
 - Implementar transporte P2P real y SAF.
+- Revisar las 17 alertas de Dependabot (6 dev-only en `npm audit` local, 0 en
+  producción).

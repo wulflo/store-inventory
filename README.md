@@ -86,16 +86,20 @@ Gestión local-first para emprendimiento de indumentaria (remeras y buzos). Stac
   y testeado; el transporte TLS/mDNS y la convergencia LAN no.
 - **Android/SAF:** funciona con almacenamiento privado; no hay selector de
   carpeta SAF ni espejo bidireccional.
-- **Android:** el APK arm64 compila; el APK x86_64 se probó en emulador API 35
-  (arranque, navegación, tema y persistencia). Falta probarlo en un dispositivo
-  físico y validar el APK arm64 en hardware real.
-- **Actualizaciones:** el updater de escritorio está configurado; falta probar
-  una actualización real publicada. En Android se actualiza reinstalando.
+- **Android:** el APK universal del CI (4 ABIs, 39.923.555 B) se instaló y
+  ejecutó en emulador API 35, conservando 315 eventos. Falta probarlo en un
+  dispositivo físico y validar el APK arm64 en hardware real.
+- **Actualizaciones:** el updater de escritorio está configurado y el release
+  dry-run generó los artefactos firmados; el draft `v1.0.0` todavía no está
+  publicado, así que falta probar una actualización real. En Android se actualiza
+  reinstalando.
 - **Firma Windows:** sin certificado Authenticode (posible aviso de SmartScreen).
-- **CI/CD:** CI ejecutado en GitHub con los 4 jobs en verde (Linux, Windows,
-  Android). El workflow de release firmado todavía no se ejecutó: su
-  `workflow_dispatch` requiere que `release.yml` esté en `main`, y la rama
-  `feat/material-p2p-release` aún no está mergeada.
-- **Testing:** sin Playwright/E2E; la UI se verificó manualmente en navegador y
-  en emulador Android.
+- **CI/CD:** CI [`40484597887`](https://github.com/wulflo/store-inventory/actions/runs/40484597887)
+  en verde y release dry-run [`40484612737`](https://github.com/wulflo/store-inventory/actions/runs/40484612737)
+  completo (Linux, Windows, Android y publish). El draft `v1.0.0` tiene 10
+  assets firmados; falta publicarlo.
+- **Testing:** 45 tests vitest + 15 tests Rust; sin Playwright/E2E. La UI se
+  verificó manualmente en navegador y emulador Android.
+- **Dependencias:** Dependabot reporta 17 alertas en `main`; `npm audit` local da
+  6 vulnerabilidades dev-only, 0 en producción.
 - **Logo:** falta el archivo de logo definitivo.
