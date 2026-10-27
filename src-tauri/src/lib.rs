@@ -252,6 +252,7 @@ pub fn run() {
       sync_remove_peer,
       updater::cmd_updater_check,
       updater::cmd_updater_install,
+      updater::cmd_open_release_page,
       store_space_info,
       backup::backup_status,
       backup::backup_set_vault,

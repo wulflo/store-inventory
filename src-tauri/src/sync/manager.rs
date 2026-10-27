@@ -523,7 +523,31 @@ impl SyncManager {
     if addr.port() == SYNC_PORT {
       addr.set_port(PAIRING_PORT);
     }
-    let pending = connect_pairing(&identity, addr, SYNC_PORT, Some(&qr.token)).await?;
+    let pending = match connect_pairing(&identity, addr, SYNC_PORT, Some(&qr.token)).await {
+      Ok(pending) => pending,
+      Err(first_error) => {
+        // Si la IP del QR no responde (por ejemplo, el QR se generó con otra
+        // interfaz de red), reintentamos con la dirección vista por discovery.
+        let fallback = self
+          .discovered
+          .lock()
+          .unwrap_or_else(|e| e.into_inner())
+          .get(&qr.id)
+          .map(|peer| format!("{}:{}", peer.ip, peer.pairing_port));
+        match fallback {
+          Some(address) => {
+            let mut alt = validate_peer_addr(&address, PAIRING_PORT)?;
+            if alt.port() == SYNC_PORT {
+              alt.set_port(PAIRING_PORT);
+            }
+            connect_pairing(&identity, alt, SYNC_PORT, Some(&qr.token))
+              .await
+              .map_err(|e| format!("{first_error}. Reintento por LAN: {e}"))?
+          }
+          None => return Err(first_error),
+        }
+      }
+    };
     if !pending.fingerprint.eq_ignore_ascii_case(&qr.fp) || pending.device_id != qr.id {
       return Err(
         "El dispositivo que respondió no coincide con el QR. No se emparejó por seguridad."

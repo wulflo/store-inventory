@@ -109,6 +109,17 @@ export function settingsUpdatesCard(): HTMLElement {
           icon('download', 16),
           checking ? 'Buscando…' : 'Buscar actualizaciones',
         ),
+        el(
+          'button',
+          {
+            class: 'btn btn-sm btn-ghost',
+            type: 'button',
+            disabled: checking || installing,
+            on: { click: () => void openReleasePage() },
+          },
+          icon('download', 16),
+          'Abrir descargas',
+        ),
       ),
       el('p', {
         class: 'small muted mt-3',
@@ -144,6 +155,7 @@ export function settingsUpdatesCard(): HTMLElement {
       }
     } catch (err) {
       check = null;
+      message = err instanceof Error ? err.message : String(err);
       showError(err);
     } finally {
       checking = false;
@@ -151,21 +163,33 @@ export function settingsUpdatesCard(): HTMLElement {
     }
   }
 
+  async function openReleasePage(): Promise<void> {
+    try {
+      await invoke('cmd_open_release_page');
+    } catch (err) {
+      showError(err);
+    }
+  }
+
   async function install(): Promise<void> {
     if (!check?.available) return;
     installing = true;
-    message = '';
+    message = 'Descargando la actualización. Esto puede tardar varios minutos…';
     render();
     try {
       message = await Promise.race([
         invoke<string>('cmd_updater_install'),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Tiempo agotado al descargar la actualización.')), 300000),
+          setTimeout(
+            () => reject(new Error('Tiempo agotado al descargar la actualización.')),
+            isAndroid() ? 240000 : 300000,
+          ),
         ),
       ]);
       toastSuccess('Actualización descargada.');
       check = null;
     } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
       showError(err);
     } finally {
       installing = false;

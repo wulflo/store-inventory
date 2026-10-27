@@ -32,7 +32,7 @@ const syncStrings: Record<string, { es: string; en: string }> = {
   'sync.scanCamera': { es: 'Escanear QR (cámara)', en: 'Scan QR (camera)' },
   'sync.showCode': { es: 'Mostrar mi código y esperar', en: 'Show my code and wait' },
   'sync.waiting': {
-    es: 'Esperando a que el otro dispositivo se conecte. Mostrá este código QR o el código de 6 dígitos.',
+    es: 'Esperando a que el otro dispositivo se conecte. Mostrá este código QR. El código de 6 dígitos se genera al conectar.',
     en: 'Waiting for the other device to connect. Show this QR code or the 6-digit code.',
   },
   'sync.noQr': { es: 'No se encontró un código QR en la imagen.', en: 'No QR code found in the image.' },

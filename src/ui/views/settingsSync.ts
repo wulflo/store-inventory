@@ -747,7 +747,7 @@ export function settingsSyncCard(app: App): HTMLElement {
           class: 'btn btn-sm',
           type: 'button',
           disabled: busy,
-          text: 'Escanear QR / OCR (cámara)',
+          text: 'Escanear QR (cámara)',
           on: { click: () => void scanQrFromCamera() },
         }),
       ),
@@ -761,7 +761,7 @@ export function settingsSyncCard(app: App): HTMLElement {
       el('div', { class: 'sync-waiting' }, el('span', { class: 'sync-spinner' })),
       el('p', {
         class: 'small',
-        text: 'Esperando a que el otro dispositivo se conecte. Mostrá este código QR o el código de 6 dígitos.',
+        text: 'Esperando a que el otro dispositivo se conecte. Mostrá este código QR. El código de 6 dígitos se genera automáticamente cuando la conexión llega.',
       }),
       qrDataUrl
         ? el('img', {

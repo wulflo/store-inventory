@@ -30,7 +30,7 @@
 ## 2. Documento de continuidad
 
 - [x] **2026-10-27:** crear este archivo `docs/PROGRESO.md`.
-- [ ] Mantenerlo actualizado al final de cada tanda de cambios.
+- [x] Mantenerlo actualizado al final de cada tanda de cambios.
 - [ ] Registrar comando de release usado y resultado del workflow.
 
 ---
@@ -112,7 +112,7 @@
 ## 9. OCR y escaneo
 
 - [x] Revisar flujo de escaneo de QR con cámara.
-- [ ] Agregar OCR de texto (si aplica a códigos/facturas/etiquetas).
+- [ ] Agregar OCR de texto real (si aplica a códigos/facturas/etiquetas). El escáner actual decodifica QR, no texto.
 - [~] El SAS se muestra al recibir la conexión; falta validar en dispositivo real.
 - [x] Permitir pegar/tipear el contenido del QR.
 - [x] Manejar permisos de cámara denegados con mensaje claro.
@@ -122,22 +122,22 @@
 ## 10. Sincronización P2P
 
 - [ ] Desktop debe descubrir dispositivos Android en la LAN.
-- [ ] Android debe recibir respuesta al escanear el QR.
+- [~] Android debe recibir respuesta al escanear el QR: se agregó reintento con la IP vista por discovery si falla la IP del QR.
 - [x] Iniciar conexión al seleccionar un dispositivo descubierto (usa puerto de pairing).
-- [ ] Mostrar solicitud de emparejamiento en ambos lados.
+- [~] Mostrar solicitud de emparejamiento en ambos lados: el SAS se muestra al recibir la conexión; falta probarlo en dispositivos reales.
 - [ ] Diagnóstico visible: IP, puerto, firewall, multicast.
-- [ ] Reintentar conexión y mostrar error real.
+- [~] Reintentar conexión y mostrar error real: fallback QR → discovery y mensajes de error detallados.
 
 ---
 
 ## 11. Actualizaciones
 
 - [x] Timeout para evitar espera infinita.
-- [ ] Desktop: descargar e instalar cuando detecta versión nueva.
-- [ ] Android: evitar congelamiento al buscar/descargar.
-- [ ] Mostrar progreso de descarga.
-- [ ] Validar `latest.json`, firma y arquitectura.
-- [ ] Registrar errores en UI.
+- [~] Desktop: descargar e instalar cuando detecta versión nueva. Si el plugin falla, se descarga el `.deb` o AppImage a Descargas y se abre el instalador.
+- [~] Android: evitar congelamiento al buscar/descargar. Timeout de UI y botón “Abrir descargas” como salida manual.
+- [~] Mostrar progreso de descarga: mensaje de estado y botón deshabilitado; falta progreso porcentual real.
+- [x] Validar `latest.json`, firma y arquitectura: manifiesto y firma minisign verificados; arquitectura elegida por plataforma.
+- [x] Registrar errores en UI: el mensaje de error queda visible en la tarjeta de actualizaciones.
 
 ---
 
@@ -178,4 +178,12 @@ gh run list --limit 5
 - Agregado campo para pegar el contenido del QR.
 - Corregido el emparejamiento desde dispositivos descubiertos para usar el puerto de pairing.
 - Sincronización/discovery arranca automáticamente al abrir la app.
-- Pendiente: validar sync real entre desktop/Android, OCR completo y descarga de actualizaciones.
+- Agregado fallback de descarga manual del updater en desktop:
+  - Si la app corre como AppImage, descarga el AppImage firmado.
+  - Si está instalada desde `.deb`, descarga el `.deb` del release y abre el instalador.
+  - Si el plugin falla, el error del plugin queda en el mensaje y se intenta la descarga manual.
+- Agregado botón “Abrir descargas” en Actualizaciones para ir a la página de releases.
+- Agregado fallback de conexión QR: si la IP del QR no responde, se reintenta con `ip:pairing_port` obtenido por discovery.
+- Aclarado en la UI que el SAS de 6 dígitos se genera al recibir la conexión.
+- Verificación: `npm run typecheck`, `npm test` (49), `npm run build`, `cargo test` (85) y `cargo check` pasan.
+- Pendiente: validar sync real entre desktop/Android, OCR de texto real y descarga de actualizaciones en cada dispositivo.
