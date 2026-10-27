@@ -27,6 +27,7 @@ const VERSION_TS = `${ROOT}src/core/version.ts`;
 const CARGO_TOML = `${ROOT}src-tauri/Cargo.toml`;
 const CARGO_LOCK = `${ROOT}src-tauri/Cargo.lock`;
 const TAURI_CONF = `${ROOT}src-tauri/tauri.conf.json`;
+const ANDROID_PROPS = `${ROOT}src-tauri/gen/android/app/tauri.properties`;
 
 function sh(cmd) {
   return execSync(cmd, { encoding: 'utf8', cwd: ROOT }).trim();
@@ -239,12 +240,29 @@ async function set(newVerRaw) {
     console.log(`Creado (mínimo): ${TAURI_CONF} → ${newVer}`);
   }
 
+  // --- Actualizar propiedades generadas de Android ---
+  if (await fileExists(ANDROID_PROPS)) {
+    let props = await readFile(ANDROID_PROPS, 'utf8');
+    props = props.replace(
+      /^tauri\.android\.versionName=.*$/m,
+      `tauri.android.versionName=${newVer}`
+    );
+    props = props.replace(
+      /^tauri\.android\.versionCode=.*$/m,
+      `tauri.android.versionCode=${mapped.android.versionCode}`
+    );
+    await writeFile(ANDROID_PROPS, props, 'utf8');
+    console.log(
+      `OK: ${ANDROID_PROPS} → ${newVer} (Android versionCode ${mapped.android.versionCode})`
+    );
+  }
+
   // Cargo.lock y gen/android: avisar que se regeneran con tauri/android init
   console.log(`Nota: ${CARGO_LOCK} y src-tauri/gen/android se regeneran con 'cargo build' / 'tauri android init'.`);
 
   // --- Commit y tag ---
   const branch = currentBranch();
-  const files = [PKG_JSON, PKG_LOCK, VERSION_TS, CARGO_TOML, TAURI_CONF].filter(await fileExists);
+  const files = [PKG_JSON, PKG_LOCK, VERSION_TS, CARGO_TOML, TAURI_CONF, ANDROID_PROPS].filter(await fileExists);
   if (files.length > 0) {
     sh(`git add ${files.join(' ')}`);
     sh(`git commit -m "chore(release): v${newVer}"`);

@@ -31,7 +31,7 @@
 
 - [x] **2026-10-27:** crear este archivo `docs/PROGRESO.md`.
 - [x] Mantenerlo actualizado al final de cada tanda de cambios.
-- [ ] Registrar comando de release usado y resultado del workflow.
+- [~] Registrar comando de release usado y resultado del workflow: `node scripts/version.mjs set X.Y.Z` + `git push origin main --tags`; falta anotar el resultado final de cada workflow.
 
 ---
 
@@ -176,6 +176,7 @@ gh run list --limit 5
 - [x] `1abfa7b` — Mostrar el ajuste aplicado al fijar stock manual.
 - [x] `e0235ec` — Documentación de producción y gastos.
 - [x] `18af15d` — Detector nativo de QR como respaldo del escáner.
+- [x] Script de versión ahora sincroniza también `src-tauri/gen/android/app/tauri.properties` (versionName/versionCode).
 
 ---
 
