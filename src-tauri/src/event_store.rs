@@ -58,6 +58,7 @@ fn device_id_path(root: &str) -> PathBuf {
  *  Android: se resolverá con el almacenamiento privado de la app cuando
  *  se implemente el backend SAF (pendiente, fase 3).
  */
+#[cfg(not(target_os = "android"))]
 pub fn default_root() -> Result<String, String> {
   let home = std::env::home_dir()
     .ok_or_else(|| "No se pudo determinar el directorio personal".to_string())?;
@@ -70,6 +71,7 @@ pub fn default_root() -> Result<String, String> {
 /* ------------------------------------------------------------------ */
 
 /** Ruta por defecto para los datos de la app. */
+#[cfg(not(target_os = "android"))]
 pub fn store_default_root() -> Result<String, String> {
   default_root()
 }

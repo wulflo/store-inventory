@@ -282,8 +282,6 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  /* Edge-to-edge: safe areas para Android */
-  padding-bottom: env(safe-area-inset-bottom);
 }
 
 body {
@@ -931,13 +929,22 @@ table.data td.num {
    11. Layout principal (sidebar, topbar, bottom nav)
    ------------------------------------------------------------------ */
 
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+
 .layout {
   display: flex;
   /* Sidebar y contenido van lado a lado. Antes era `column`, así que en
      escritorio la sidebar ocupaba todo el ancho y el contenido caía debajo. */
   flex-direction: row;
-  height: 100vh;
-  max-height: 100vh;
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  max-height: none;
 }
 
 .main {
@@ -955,16 +962,17 @@ table.data td.num {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  padding-top: env(safe-area-inset-top);
 }
 
 .topbar {
-  height: var(--header-h);
+  min-height: calc(var(--header-h) + env(safe-area-inset-top));
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--space-4);
+  padding: env(safe-area-inset-top) var(--space-4) 0;
   flex-shrink: 0;
 }
 
@@ -1040,13 +1048,13 @@ table.data td.num {
 
 .bottom-nav {
   display: flex;
-  height: var(--bottomnav-h);
+  height: calc(var(--bottomnav-h) + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
   background: var(--surface);
   justify-content: space-around;
   align-items: center;
   flex-shrink: 0;
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-2) env(safe-area-inset-bottom);
 }
 .bottom-nav button {
   display: flex;
@@ -1484,7 +1492,7 @@ table.data td.num {
     display: flex;
   }
   .fab {
-    bottom: calc(var(--space-6) + var(--bottomnav-h) / 2);
+    bottom: calc(var(--space-6) + var(--bottomnav-h) / 2 + env(safe-area-inset-bottom));
   }
   .content {
     padding-bottom: calc(var(--bottomnav-h) + var(--space-5));

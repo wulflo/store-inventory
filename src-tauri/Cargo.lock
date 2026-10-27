@@ -1601,6 +1601,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tauri",
+ "tauri-build",
  "tauri-plugin-updater",
  "tokio",
  "tokio-rustls",

@@ -1,3 +1,4 @@
-resources {
-    string(name = "app_name", "Inventario Tienda")
-}
+<resources>
+    <string name="app_name">"Inventario Tienda"</string>
+    <string name="main_activity_title">"Inventario Tienda"</string>
+</resources>
