@@ -41,7 +41,7 @@
     "longDescription": "App de gestión local-first para emprendimiento de indumentaria (remeras y buzos) con Event Sourcing JSONL, sin base SQL .db.",
     "android": {
       "minSdkVersion": 28,
-      "versionCode": 1000002
+      "versionCode": 1002
     }
   },
   "plugins": {
