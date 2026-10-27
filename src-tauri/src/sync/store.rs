@@ -129,7 +129,8 @@ pub fn append_missing(
         if crate::crypto::unwrap_encrypted(&ev.payload).is_some() {
           return Err(
             "Este equipo no tiene el cifrado activado y recibió eventos cifrados. \
-             Activá el cifrado con la misma contraseña maestra antes de sincronizar."
+             Importá el llavero del otro equipo desde Ajustes > Cifrado > Importar llavero \
+             (activar el cifrado con la misma contraseña crea una clave distinta y no sirve)."
               .to_string(),
           );
         }

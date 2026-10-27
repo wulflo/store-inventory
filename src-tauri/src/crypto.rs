@@ -267,7 +267,8 @@ pub fn ensure_compatible_payload(payload: &Value, km: &KeyMaterial) -> Result<()
         return Err(format!(
           "El evento viene cifrado con otra clave (kid {kid}). \
            Este equipo usa kid {}. Para sincronizar, ambos deben compartir el llavero \
-           (Ajustes > Cifrado > Importar llavero o Adoptar llavero) y usar la misma contraseña.",
+           (Ajustes > Cifrado > Importar llavero o Adoptar llavero). Activarlo por separado \
+           con la misma contraseña no alcanza: cada activación crea una clave distinta.",
           km.kid
         ));
       }

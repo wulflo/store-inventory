@@ -550,6 +550,11 @@ share the **keyring**:
 Sync rejects events whose `kid` differs from the local one instead of storing
 unreadable data. The error tells the user to import/adopt the keyring.
 
+After importing, each device can change its **local** password (*Cambiar
+contraseña*): that only re-wraps the same DEK in that device's keyring, so the
+shared `kid` and sync keep working. The recovery code belongs to the keyring
+and stays valid until a rotation generates a new keyring.
+
 Daily backups include `keyring.json`, so restoring a backup on another device
 is self-sufficient: copy the events and the backup's `keyring.json` into
 `keys/keyring.json` (or use *Importar llavero*), then enter the password. The
