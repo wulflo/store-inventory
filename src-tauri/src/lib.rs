@@ -113,15 +113,15 @@ pub fn run() {
 
 #[derive(Clone)]
 struct SyncState {
-    server: Arc<Mutex<crate::sync::server::SyncServerReal>>,
+    server: Arc<Mutex<crate::sync::server::SyncServer>>,
     peers: Arc<Mutex<crate::sync::peer::PeersStore>>,
     identity: Arc<Mutex<Option<crate::sync::identity::Identity>>>,
 }
 
 #[tauri::command]
-async fn sync_start_real(state: tauri::State<'_, SyncState>) -> Result<(), String> {
+fn sync_start_real(state: tauri::State<'_, SyncState>) -> Result<(), String> {
     let mut server = state.server.lock().unwrap();
-    server.start().await
+    server.start()
 }
 
 #[tauri::command]
