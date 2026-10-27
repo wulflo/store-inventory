@@ -17,9 +17,10 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { parseSemver, mapVersion, formatSemver } from './version-map.mjs';
 
-const ROOT = new URL('.', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PKG_JSON = `${ROOT}package.json`;
 const PKG_LOCK = `${ROOT}package-lock.json`;
 const VERSION_TS = `${ROOT}src/core/version.ts`;
