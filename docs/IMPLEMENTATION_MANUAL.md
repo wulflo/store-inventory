@@ -1,6 +1,6 @@
 # Implementation Manual: Local-First Inventory App with P2P LAN Sync (Android + Desktop)
 
-**Version:** 0.1.6  
+**Version:** 0.1.7  
 **Date:** 2026-10-27  
 **Stack:** Tauri v2 + Rust + TypeScript (vanilla) + Vite  
 **Platforms:** Linux, Windows, Android (minSdk 28)
@@ -451,7 +451,94 @@ Functions:
 
 ---
 
-## 10. Security Review Summary
+## 10. Payload Encryption at Rest (opt-in)
+
+Per-event encryption lets the user protect the **content** of the events on
+disk while keeping the metadata in plaintext, so ordering, deduplication and
+sync keep working without the master password.
+
+### 10.1 Design
+
+| Layer | Choice |
+|---|---|
+| Key derivation | Argon2id (32-byte key) from the master password |
+| Cipher | XChaCha20-Poly1305 (24-byte random nonce per event) |
+| Encoding | Base64 (standard alphabet) for ciphertext and nonce |
+| Key storage | `CryptoState` in `tauri::State`, RAM only; wiped on lock/exit |
+| Encrypted field | `payload` only |
+
+An encrypted event on disk looks like:
+
+```json
+{
+  "id": "0192f3a4-...",
+  "type": "Order.Created",
+  "payload": {
+    "_encrypted": true,
+    "alg": "XChaCha20-Poly1305",
+    "data": "base64(ciphertext)",
+    "nonce": "base64(24 bytes)"
+  },
+  "metadata": { "hlc": 1793122609026000, "device_id": "...", "timestamp": 1793122609026, "version": 1 }
+}
+```
+
+### 10.2 Dependencies
+
+```toml
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+base64 = "0.22"   # already present
+rand = "0.8"      # already present
+```
+
+### 10.3 Rust API (`src-tauri/src/crypto.rs`)
+
+| Item | Purpose |
+|---|---|
+| `CryptoState` | `Mutex<Option<[u8; 32]>>` managed by Tauri |
+| `derive_key(password)` | Argon2id → 32-byte key |
+| `encrypt_payload(value, key)` | → `(ciphertext_b64, nonce_b64)` |
+| `decrypt_payload(ct, nonce, key)` | → original JSON value |
+| `encrypt_event_line(line, key)` | Encrypts only `payload`, keeps metadata |
+| `decrypt_event_line(line, key)` | Decrypts `payload`, or marks `_error` if the key is wrong |
+| `append_event_encrypted(...)` | Encrypt + append through `event_store::store_append` |
+| `read_events_decrypted(...)` | Read through `event_store::store_read` + decrypt |
+
+Tauri commands (registered in `lib.rs`):
+
+| Command | Flow |
+|---|---|
+| `crypto_unlock(password)` | Derive key and keep it in RAM |
+| `crypto_lock()` | Wipe the key from RAM |
+| `crypto_status()` | `true` if unlocked |
+| `crypto_encrypt_text(plaintext)` / `crypto_decrypt_text(encrypted)` | Diagnostics |
+| `crypto_append_event(root, domain, event_json)` | **Write flow**: encrypt payload + append to JSONL |
+| `crypto_read_events(root, domain)` | **Read flow**: read JSONL + return plaintext events |
+
+### 10.4 Error handling
+
+- Empty password → `La contraseña no puede estar vacía.`
+- Command used while locked → `Llave no inicializada. Desbloqueá el cifrado...`
+- Wrong password / tampered ciphertext → authentication failure; in the read
+  flow the event keeps its metadata and its payload is returned with
+  `_error`, so the rest of the database stays usable and the UI can explain it.
+- Malformed Base64 / nonce length ≠ 24 → explicit error.
+- Plaintext events are read unchanged (migration is incremental).
+
+### 10.5 Frontend (Settings → *Cifrado de eventos*)
+
+`src/ui/views/settingsCrypto.ts` adds a card with: lock status, master-password
+input, *Desbloquear* / *Bloquear* buttons and a *Probar cifrado/descifrado*
+button. Decrypted values never persist; the password is not stored anywhere.
+
+> Encryption is opt-in: the normal store keeps writing plaintext unless the
+> encrypted write command is used. The commands are ready to be wired to the
+> store as a next step (see §15).
+
+---
+
+## 11. Security Review Summary
 
 ### Threat model
 - LAN-only communication
@@ -474,17 +561,19 @@ Functions:
 | HLC validation | ✅ | Future events rejected (> 24h tolerance) |
 | Frame/batch limits | ✅ | 1 MiB frame, 500 events/512 KiB batch |
 | No Internet connections | ✅ | Fallback UDP to 8.8.8.8 removed |
+| Payload encryption at rest | ✅ (opt-in) | Argon2id + XChaCha20-Poly1305, key in RAM |
 
 ### Known limitations
 - `0.0.0.0` bind (necessary for multi-interface LAN, filtered by IP)
-- No encryption at rest (relies on OS app data dir permissions)
+- Encryption at rest is opt-in and only covers `payload`; metadata stays readable
+- Fixed Argon2 salt (`inventario-tienda-v1-salt`)
 - No rate limiting on handshake/pairing (only sync connections)
 
 ---
 
-## 11. Corrections Applied During Development
+## 12. Corrections Applied During Development
 
-### 11.1 Runtime Tauri Error (White Screen)
+### 12.1 Runtime Tauri Error (White Screen)
 
 **Problem:** `event.listen not allowed` + `store_read missing required key args`
 
@@ -493,7 +582,7 @@ Functions:
 2. Registered `tauri-plugin-dialog`, `tauri-plugin-fs`, `tauri-plugin-opener` in `lib.rs`
 3. Flattened command args (`store_read(root, domain)` instead of `store_read(args: ReadArgs)`)
 
-### 11.2 Android Layout (Portrait)
+### 12.2 Android Layout (Portrait)
 
 **Problem:** UI not adapted to vertical screens.
 
@@ -502,7 +591,7 @@ Functions:
 - Responsive breakpoints for mobile
 - Touch-friendly input sizes (min 44px)
 
-### 11.3 Android Updater
+### 12.3 Android Updater
 
 **Problem:** No way to install APK updates on Android.
 
@@ -513,7 +602,7 @@ Functions:
 - Launch installer via `FileProvider` + `REQUEST_INSTALL_PACKAGES`
 - Base64-encode `.sig` in `latest.json`
 
-### 11.4 Desktop Updates
+### 12.4 Desktop Updates
 
 **Problem:** Desktop updater not working.
 
@@ -522,7 +611,7 @@ Functions:
 - Added `createUpdaterArtifacts: true` in `tauri.conf.json`
 - CI signs artifacts with Tauri signing key
 
-### 11.5 Permission Issues
+### 12.5 Permission Issues
 
 **Problem:** Various permission errors on Android and desktop.
 
@@ -532,7 +621,7 @@ Functions:
 - Created capabilities file with minimal permissions
 - Removed restrictive custom capabilities
 
-### 11.6 Data Loss Prevention
+### 12.6 Data Loss Prevention
 
 **Problem:** No backup mechanism.
 
@@ -543,7 +632,7 @@ Functions:
 - SHA-256 integrity verification
 - Error propagation (never fail silently)
 
-### 11.7 Sync Efficiency
+### 12.7 Sync Efficiency
 
 **Problem:** Sending full domain history on every sync.
 
@@ -552,7 +641,7 @@ Functions:
 - Only missing events travel
 - Append + dedupe on receive
 
-### 11.8 Security
+### 12.8 Security
 
 **Problem:** Potential Internet traffic from fallback.
 
@@ -562,11 +651,41 @@ Functions:
 - Added security logging
 - Created security review documentation
 
+### 12.9 Settings page rendered only the title
+
+**Problem:** Selecting *Ajustes* showed the page title but an empty body.
+
+**Cause:** `el()` in `src/ui/dom.ts` assumed `style` was an object. Cards passed
+a CSS string (`style: 'justify-content: space-between;'`), and
+`Object.entries(string)` produced numeric keys, so `node.style['0'] = 'j'`
+threw `TypeError: Failed to set an indexed property [0] on
+'CSSStyleDeclaration'`. The exception aborted `settingsView()` before
+`mount()`, leaving only the title.
+
+**Fixes:**
+- `el()` now accepts `style` as an object **or** a CSS string (`cssText`).
+- Object keys are applied with `setProperty()` (camelCase → kebab-case).
+- All string-style call sites converted to objects (`settingsCrypto`,
+  `settingsAutoSync`, `settingsBackup`).
+
+### 12.10 Android-only compile error (`E0106`)
+
+**Problem:** The v0.1.6 release failed in `build-android` while the desktop
+build passed.
+
+**Cause:** `call_vault_static()` in `android_fs.rs` (compiled only for Android)
+had elided lifetimes in its `JNIEnv`/`JObject`/`JValue` parameters and return
+type.
+
+**Fix:** explicit `'local` lifetime plus an owned `JValueOwned` return, so the
+result no longer borrows from the `AttachGuard`. Verified locally with
+`cargo check --target aarch64-linux-android --lib`.
+
 ---
 
-## 12. Build and Release
+## 13. Build and Release
 
-### 12.1 Local development
+### 13.1 Local development
 
 ```bash
 # Web dev
@@ -579,7 +698,7 @@ npm run app:dev
 npm run app:build
 ```
 
-### 12.2 CI/CD
+### 13.2 CI/CD
 
 **File:** `.github/workflows/release.yml`
 
@@ -588,7 +707,7 @@ npm run app:build
 - Artifacts: .deb, .AppImage, .msi, .exe, .apk, .aab
 - Updater: signed with Tauri signing key
 
-### 12.3 Version management
+### 13.3 Version management
 
 ```bash
 # Check version coherence
@@ -600,7 +719,7 @@ node scripts/version.mjs set 0.1.7
 
 Synchronizes: `package.json`, `Cargo.toml`, `tauri.conf.json`, `package-lock.json`
 
-### 12.4 Release checklist
+### 13.4 Release checklist
 
 1. Update version: `node scripts/version.mjs set X.Y.Z`
 2. Push: `git push origin main && git push origin vX.Y.Z`
@@ -610,15 +729,15 @@ Synchronizes: `package.json`, `Cargo.toml`, `tauri.conf.json`, `package-lock.jso
 
 ---
 
-## 13. Testing
+## 14. Testing
 
-### 13.1 Rust tests
+### 14.1 Rust tests
 
 ```bash
 cd src-tauri && cargo test
 ```
 
-**37 tests** covering:
+**51 tests** covering:
 - Sync net (LAN IP validation)
 - Sync identity (cert, fingerprint, SAS)
 - Sync pairing (registry, handshake)
@@ -628,8 +747,9 @@ cd src-tauri && cargo test
 - Sync server (full mTLS exchange)
 - Updater (semver, base64 signature)
 - Backup (SAF URI, vault path, accessibility)
+- Crypto (Argon2 derivation, XChaCha20 roundtrip, wrong key, JSONL write/read at rest)
 
-### 13.2 Frontend tests
+### 14.2 Frontend tests
 
 ```bash
 npm test
@@ -641,7 +761,7 @@ npm test
 - Store operations
 - Sync UI
 
-### 13.3 Typecheck
+### 14.3 Typecheck
 
 ```bash
 npm run typecheck  # tsc --noEmit
@@ -649,7 +769,7 @@ npm run typecheck  # tsc --noEmit
 
 ---
 
-## 14. Known Issues and Future Work
+## 15. Known Issues and Future Work
 
 ### Not implemented (requires more work)
 1. **WorkManager** for Android background sync (min 15 min, WiFi only)
@@ -657,7 +777,7 @@ npm run typecheck  # tsc --noEmit
 3. **Discovery → auto-sync trigger** when paired peer detected
 4. **Single-flight per peer** (currently global flag)
 5. **Frontend unit tests** for debounce/single-flight/backoff
-6. **Encryption at rest** for sensitive data
+6. **Wire encrypted write/read into the normal store** (commands exist; the default path still writes plaintext)
 
 ### Testing not possible in this environment
 - Android device testing (SAF, WorkManager, battery saver)
@@ -667,7 +787,7 @@ npm run typecheck  # tsc --noEmit
 
 ---
 
-## 15. Quick Reference: Key Files
+## 16. Quick Reference: Key Files
 
 | Purpose | File |
 |---|---|
@@ -684,6 +804,8 @@ npm run typecheck  # tsc --noEmit
 | Sync pairing (SAS) | `src-tauri/src/sync/pairing.rs` |
 | Sync net (LAN) | `src-tauri/src/sync/net.rs` |
 | Backup system | `src-tauri/src/backup.rs` |
+| Payload encryption | `src-tauri/src/crypto.rs` |
+| DOM helper (`el`) | `src/ui/dom.ts` |
 | Android FS (JNI) | `src-tauri/src/android_fs.rs` |
 | Updater | `src-tauri/src/updater.rs` |
 | Android manifest | `src-tauri/gen/android/app/src/main/AndroidManifest.xml` |
@@ -696,6 +818,7 @@ npm run typecheck  # tsc --noEmit
 | Frontend store | `src/store/TauriEventStore.ts` |
 | Auto-sync | `src/sync/autoSync.ts` |
 | Backup UI | `src/ui/views/settingsBackup.ts` |
+| Crypto UI | `src/ui/views/settingsCrypto.ts` |
 | Auto-sync UI | `src/ui/views/settingsAutoSync.ts` |
 | Sync UI | `src/ui/views/settingsSync.ts` |
 | Updater UI | `src/ui/views/settingsUpdates.ts` |

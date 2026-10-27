@@ -49,7 +49,7 @@ export function settingsBackupView(root: HTMLElement, store: TauriEventStore): v
           el('button', { class: 'btn', id: 'vault-pick' }, 'Elegir carpeta de bóveda'),
           el('button', { class: 'btn btn-ghost', id: 'vault-clear' }, 'Quitar bóveda'),
         ]),
-        el('p', { class: 'muted', style: 'font-size:12px' }, 'Los respaldos se guardan en: <datos>/backups/daily/YYYY-MM-DD/ y, si hay bóveda externa, también en: <bóveda>/inventario-tienda-backup/daily/YYYY-MM-DD/'),
+        el('p', { class: 'muted', style: { fontSize: '12px' } }, 'Los respaldos se guardan en: <datos>/backups/daily/YYYY-MM-DD/ y, si hay bóveda externa, también en: <bóveda>/inventario-tienda-backup/daily/YYYY-MM-DD/'),
       ]),
     ]),
   ]));
@@ -157,9 +157,9 @@ export function settingsBackupView(root: HTMLElement, store: TauriEventStore): v
       if (errorsEl) {
         errorsEl.innerHTML = '';
         if (res.path && !res.accessible) {
-          const warn = el('div', { class: 'card', style: 'border-color: var(--danger); padding: 8px;' }, [
-            el('p', { style: 'color: var(--danger); margin: 0;' }, res.error || 'La bóveda no es accesible.'),
-            el('button', { class: 'btn btn-ghost', style: 'margin-top: 4px;', on: { click: () => document.getElementById('vault-pick')?.click() } }, 'Elegir carpeta de nuevo'),
+          const warn = el('div', { class: 'card', style: { borderColor: 'var(--danger)', padding: '8px' } }, [
+            el('p', { style: { color: 'var(--danger)', margin: '0' } }, res.error || 'La bóveda no es accesible.'),
+            el('button', { class: 'btn btn-ghost', style: { marginTop: '4px' }, on: { click: () => document.getElementById('vault-pick')?.click() } }, 'Elegir carpeta de nuevo'),
           ]);
           errorsEl.appendChild(warn);
         }

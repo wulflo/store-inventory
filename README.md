@@ -58,6 +58,9 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 - Initial CSV import (products, customers, orders) with column mapping.
 - **P2P Sync (LAN):** pairing via 6-digit SAS code with mutual TLS 1.3 and pinned self-signed certificates. Only accepts private LAN addresses; reconciliation by domain with deduplication by ID.
 - **Updates:** signed search and installation with minisign. Desktop uses Tauri updater; Android downloads APK, verifies signature and saves to **Downloads** folder for manual installation.
+- **Daily backups:** automatic rotation to `backups/daily/YYYY-MM-DD/`, per-device vault copy (filesystem on desktop, SAF on Android), SHA-256 manifest and append-only restore from the vault.
+- **Auto-sync:** debounced sync after local changes, periodic sync, exponential backoff and battery-saver mode.
+- **Payload encryption (opt-in):** Argon2id key derivation + XChaCha20-Poly1305 over the event `payload`; metadata stays in plaintext for ordering and sync. The key lives only in RAM.
 - Risk zone (clear data — pending full implementation).
 
 ### Data Semantics
@@ -74,7 +77,7 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 - Desktop: data in `~/.local/share/inventario-tienda` (Linux).
 - Android: data in app private storage (`app_data_dir`).
 - Direct P2P sync over LAN (mutual TLS + SAS pairing). Can also sync via external agents over a data folder (Syncthing/Drive).
-- Manual backup from Settings; daily automatic rotation not yet implemented.
+- Manual JSON export plus daily automatic backups (local and external vault).
 
 ### Development Requirements
 - Node 20+ and npm.
@@ -87,6 +90,3 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 ## License
 
 MIT
-EOF
-echo "---"
-wc -l /home/alonso/Documentos/Repositorios/inventario-tienda/README.md

@@ -16,13 +16,13 @@ export function settingsAutoSyncCard(app: any): HTMLElement {
     ]),
     el('div', { class: 'card-body stack' }, [
       el('div', { class: 'field' }, [
-        el('label', { class: 'row', style: 'justify-content: space-between;' }, [
+        el('label', { class: 'row', style: { justifyContent: 'space-between' } }, [
           el('span', {}, 'Sincronización automática'),
           el('input', { type: 'checkbox', id: 'auto-sync-enabled' }),
         ]),
       ]),
       el('div', { class: 'field' }, [
-        el('label', { class: 'row', style: 'justify-content: space-between;' }, [
+        el('label', { class: 'row', style: { justifyContent: 'space-between' } }, [
           el('span', {}, 'Respetar ahorro de batería'),
           el('input', { type: 'checkbox', id: 'auto-sync-battery' }),
         ]),
@@ -60,7 +60,7 @@ export function settingsAutoSyncCard(app: any): HTMLElement {
         ? `Modo efectivo: ${mode}${battery.power_save_mode ? ' (por ahorro de batería del sistema)' : battery.battery_level < 15 && !battery.is_charging ? ' (batería baja)' : ''}`
         : 'Modo efectivo: Normal (ahorro de batería desactivado)';
       statusEl.appendChild(el('p', { class: 'muted' }, modeText));
-      statusEl.appendChild(el('p', { class: 'muted', style: 'font-size:12px' }, `Batería: ${battery.battery_level}%${battery.is_charging ? ' (cargando)' : ''}`));
+      statusEl.appendChild(el('p', { class: 'muted', style: { fontSize: '12px' } }, `Batería: ${battery.battery_level}%${battery.is_charging ? ' (cargando)' : ''}`));
     } catch (e: any) {
       statusEl.appendChild(el('p', { class: 'muted' }, e?.message || String(e)));
     }

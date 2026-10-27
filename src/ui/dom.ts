@@ -11,7 +11,8 @@ export interface ElOptions extends Attrs {
   text?: string;
   html?: string;
   on?: Record<string, EventListenerOrEventListenerObject>;
-  style?: Partial<CSSStyleDeclaration> | Record<string, string>;
+  /** Objeto de propiedades CSS o, por compatibilidad, una cadena CSS ("color: red;"). */
+  style?: Partial<CSSStyleDeclaration> | Record<string, string> | string;
   dataset?: Record<string, string>;
 }
 
@@ -43,9 +44,14 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   }
 
   if (style) {
-    for (const [key, value] of Object.entries(style)) {
-      if (value === undefined) continue;
-      (node.style as any)[key] = value;
+    if (typeof style === 'string') {
+      node.style.cssText = style;
+    } else {
+      for (const [key, value] of Object.entries(style)) {
+        if (value === undefined) continue;
+        const prop = key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+        node.style.setProperty(prop, String(value));
+      }
     }
   }
 

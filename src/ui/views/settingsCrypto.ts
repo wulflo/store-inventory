@@ -13,19 +13,19 @@ export function settingsCryptoCard(app: any): HTMLElement {
     card({
       title: 'Cifrado de eventos (Payload Encryption)',
       content: el('div', {}, [
-        el('p', { class: 'muted', style: 'margin-bottom: 12px;' }, 'Protege el contenido de los eventos en disco. Los metadatos (id, timestamp, tipo) quedan en texto plano para sincronización y ordenamiento.'),
-        el('div', { id: 'crypto-status', class: 'stack', style: 'margin-bottom: 12px;' }, [
+        el('p', { class: 'muted', style: { marginBottom: '12px' } }, 'Protege el contenido de los eventos en disco. Los metadatos (id, timestamp, tipo) quedan en texto plano para sincronización y ordenamiento.'),
+        el('div', { id: 'crypto-status', class: 'stack', style: { marginBottom: '12px' } }, [
           el('p', { class: 'muted' }, 'Cargando estado...'),
         ]),
         el('div', { class: 'field' }, [
           el('label', {}, 'Contraseña maestra'),
           el('input', { type: 'password', id: 'crypto-password', class: 'input', placeholder: 'Ingresá la contraseña maestra' }),
         ]),
-        el('div', { class: 'row', style: 'margin-top: 8px;' }, [
+        el('div', { class: 'row', style: { marginTop: '8px' } }, [
           el('button', { class: 'btn', id: 'crypto-unlock' }, 'Desbloquear'),
           el('button', { class: 'btn btn-ghost', id: 'crypto-lock' }, 'Bloquear'),
         ]),
-        el('div', { id: 'crypto-test', class: 'stack', style: 'margin-top: 12px;' }, []),
+        el('div', { id: 'crypto-test', class: 'stack', style: { marginTop: '12px' } }, []),
       ]),
     }),
   );
@@ -46,12 +46,12 @@ export function settingsCryptoCard(app: any): HTMLElement {
         el('span', { style: unlocked ? 'color: var(--success);' : 'color: var(--danger);' }, unlocked ? 'Desbloqueado (llave en RAM)' : 'Bloqueado'),
       ]));
       if (unlocked) {
-        statusEl.appendChild(el('p', { class: 'muted', style: 'font-size: 12px;' }, 'Los eventos se cifran/descifran automáticamente.'));
+        statusEl.appendChild(el('p', { class: 'muted', style: { fontSize: '12px' } }, 'Los eventos se cifran/descifran automáticamente.'));
       } else {
-        statusEl.appendChild(el('p', { class: 'muted', style: 'font-size: 12px;' }, 'Ingresá la contraseña para desbloquear el cifrado.'));
+        statusEl.appendChild(el('p', { class: 'muted', style: { fontSize: '12px' } }, 'Ingresá la contraseña para desbloquear el cifrado.'));
       }
     } catch (e: any) {
-      statusEl.appendChild(el('p', { class: 'muted', style: 'color: var(--danger);' }, e?.message || String(e)));
+      statusEl.appendChild(el('p', { class: 'muted', style: { color: 'var(--danger)' } }, e?.message || String(e)));
     }
   }
 

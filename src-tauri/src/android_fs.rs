@@ -144,7 +144,13 @@ pub fn install_apk(file_name: &str) -> Result<(), String> {
 /* Bóveda externa vía SAF (Android)                                  */
 /* ------------------------------------------------------------------ */
 
-fn call_vault_static(env: &mut jni::JNIEnv, ctx: &jni::objects::JObject, method: &str, sig: &str, args: &[jni::objects::JValue]) -> Result<jni::objects::JValue, String> {
+fn call_vault_static<'local>(
+  env: &mut jni::JNIEnv<'local>,
+  ctx: &jni::objects::JObject<'_>,
+  method: &str,
+  sig: &str,
+  args: &[jni::objects::JValue<'_, '_>],
+) -> Result<jni::objects::JValueOwned<'local>, String> {
   let loader = env
     .call_method(ctx, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
     .map_err(|e| format!("No se pudo obtener ClassLoader: {e}"))?
