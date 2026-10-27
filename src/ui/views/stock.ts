@@ -327,7 +327,9 @@ export function openSetStock(app: App, variant: Variant): void {
                 reason: reasonInput.value || 'Conteo manual',
               });
               modal.close();
-              toastSuccess(`Stock fijado en ${target}.`);
+              toastSuccess(
+                `Stock fijado en ${target} (${delta > 0 ? '+' : ''}${delta} unidades).`,
+              );
             } catch (err) {
               showError(err);
             }
