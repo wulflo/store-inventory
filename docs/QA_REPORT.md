@@ -94,7 +94,9 @@ Datos de demostración, 320×640, Android 35:
    íconos generados por Tauri.
 8. **CI/CD:** el run `40475650914` pasó completo en GitHub (Linux, Windows,
    Android). El workflow de **release** (artefactos firmados y draft) todavía no
-   se ejecutó.
+   se ejecutó: `gh workflow run release.yml` devuelve 404 porque `release.yml` no
+   está en la rama default `main`; `workflow_dispatch` solo se registra desde
+   allí. Para probarlo hay que mergear a `main` o disparar un tag `v1.0.0`.
 9. **P2P en segundo plano:** Android puede suspender la sincronización por Doze;
    solo se plantea en primer plano.
 10. **Tamaño del APK debug:** ~268 MB por ABI por los símbolos de depuración; el

@@ -112,8 +112,10 @@ Registra aquí las versiones elegidas y decisiones técnicas. Se actualiza al ce
 - **Android SDK en CI:** se dejó de usar `android-actions/setup-android@v3`
   porque intenta instalar el paquete `tools`, retirado del repositorio de Google.
   El workflow usa el SDK preinstalado del runner y `sdkmanager` directo.
-- **Release workflow:** todavía no ejecutado; queda pendiente el dry-run firmado
-  con artefactos Linux/Windows/Android y `latest.json`.
+- **Release workflow:** todavía no ejecutado. `workflow_dispatch` devuelve 404
+  mientras `release.yml` no exista en la rama default `main`; la rama feature
+  todavía no está mergeada. Queda pendiente el dry-run firmado con artefactos
+  Linux/Windows/Android y `latest.json`, o disparar un tag `v1.0.0`.
 
 ### Hotfix de auditoría de UI y persistencia (fase 1/7)
 - **Pérdida de datos en navegador:** `WebEventStore.append` usaba `createWritable()` sin `keepExistingData`, que trunca el `.jsonl` en cada escritura. Ahora escribe al final con posición explícita y tiene fallback de reescritura. Regresión cubierta en `tests/store.test.ts`.

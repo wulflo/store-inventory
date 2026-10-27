@@ -93,7 +93,9 @@ Gestión local-first para emprendimiento de indumentaria (remeras y buzos). Stac
   una actualización real publicada. En Android se actualiza reinstalando.
 - **Firma Windows:** sin certificado Authenticode (posible aviso de SmartScreen).
 - **CI/CD:** CI ejecutado en GitHub con los 4 jobs en verde (Linux, Windows,
-  Android). El workflow de release firmado todavía no se ejecutó.
+  Android). El workflow de release firmado todavía no se ejecutó: su
+  `workflow_dispatch` requiere que `release.yml` esté en `main`, y la rama
+  `feat/material-p2p-release` aún no está mergeada.
 - **Testing:** sin Playwright/E2E; la UI se verificó manualmente en navegador y
   en emulador Android.
 - **Logo:** falta el archivo de logo definitivo.
