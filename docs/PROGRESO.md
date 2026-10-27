@@ -73,7 +73,7 @@
 ## 5. Producción en marcha
 
 - [x] Órdenes de producción y líneas ya existen.
-- [ ] Vista rápida de “producción en marcha” en Inicio.
+- [x] Vista rápida de “producción en marcha” en Inicio (tarjeta “Qué producir esta semana”).
 - [ ] Priorizar órdenes con pedidos pendientes.
 - [ ] Completar producción parcial desde la vista principal.
 
@@ -83,7 +83,7 @@
 
 - [x] Alta, edición y borrado de gastos.
 - [x] Resumen por categoría y período.
-- [ ] Mantener gastos generales separados de costos de producto.
+- [x] Mantener gastos generales separados de costos de producto (los gastos no se mezclan con el costo unitario).
 
 ---
 
