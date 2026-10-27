@@ -1,4 +1,4 @@
 /* Generado por scripts/version.mjs. No editar manualmente. */
 
-export const APP_VERSION = '0.2.3';
-export const APP_VERSION_PARSED = {"major":0,"minor":2,"patch":3};
+export const APP_VERSION = '0.2.4';
+export const APP_VERSION_PARSED = {"major":0,"minor":2,"patch":4};
