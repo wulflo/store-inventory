@@ -199,8 +199,10 @@ async fn android_install() -> Result<String, String> {
     "application/vnd.android.package-archive",
     &bytes,
   )?;
+  // Intentar lanzar el instalador automáticamente (FileProvider/MediaStore).
+  let _ = crate::android_fs::install_apk(&file_name);
   Ok(format!(
-    "APK {} guardado en Descargas. Ruta: {saved}. Abrí el archivo para instalar la actualización.",
+    "APK {} guardado en Descargas. Ruta: {saved}. Si no se abrió el instalador, abrilo manualmente para actualizar.",
     manifest.version
   ))
 }

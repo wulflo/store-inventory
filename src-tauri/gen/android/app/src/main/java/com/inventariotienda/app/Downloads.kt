@@ -2,12 +2,16 @@ package com.inventariotienda.app
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import androidx.core.app.ActivityCompat
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -77,42 +81,103 @@ object Downloads {
         }
     }
 
-    private fun saveWithMediaStore(
-        context: Context,
-        fileName: String,
-        mimeType: String,
-        bytes: ByteArray,
-    ): String {
+    private fun saveWithMediaStore(context: Context, fileName: String, mimeType: String, bytes: ByteArray): String {
         val resolver = context.contentResolver
-        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
-        val uri = resolver.insert(collection, values)
-            ?: throw IllegalStateException("No se pudo crear el archivo en Descargas")
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw SecurityException("No se pudo crear el archivo en Descargas.")
         try {
-            resolver.openOutputStream(uri)?.use { stream -> stream.write(bytes) }
-                ?: throw IllegalStateException("No se pudo abrir el archivo en Descargas")
+            resolver.openOutputStream(uri)?.use { out ->
+                out.write(bytes)
+                out.flush()
+            } ?: throw SecurityException("No se pudo escribir el APK en Descargas.")
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-        } catch (error: Exception) {
+            return uri.toString()
+        } catch (e: Exception) {
             resolver.delete(uri, null, null)
-            throw error
+            throw e
         }
-        return "Descargas/$fileName"
     }
 
     private fun saveLegacy(context: Context, fileName: String, bytes: ByteArray): String {
         requestLegacyPermission(context)
         val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        if (!dir.exists() && !dir.mkdirs()) {
-            throw IllegalStateException("No se pudo acceder a la carpeta Descargas")
+        if (!dir.exists()) {
+            dir.mkdirs()
         }
         val file = File(dir, fileName)
-        file.writeBytes(bytes)
+        FileOutputStream(file).use { out ->
+            out.write(bytes)
+            out.flush()
+        }
         return file.absolutePath
+    }
+
+    /**
+     * Lanza el instalador del APK. Para Android 7+ se usa FileProvider; en
+     * versiones antiguas se usa un Uri directo (solo viable para archivos propios).
+     */
+    @JvmStatic
+    fun install(context: Context, fileName: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            installWithMediaStore(context, fileName)
+        } else {
+            installLegacy(context, fileName)
+        }
+    }
+
+    private fun installWithMediaStore(context: Context, fileName: String) {
+        val resolver = context.contentResolver
+        val query = resolver.query(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.DISPLAY_NAME),
+            "${MediaStore.Downloads.DISPLAY_NAME} = ?",
+            arrayOf(fileName),
+            null,
+        )
+        query?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))
+                val uri = Uri.withAppendedPath(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id.toString())
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
+                context.startActivity(intent)
+                return
+            }
+        }
+        // Si no se encuentra por nombre (poca probabilidad), avisamos al usuario.
+        throw SecurityException("No se encontró el APK en Descargas para abrirlo.")
+    }
+
+    private fun installLegacy(context: Context, fileName: String) {
+        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val file = File(dir, fileName)
+        if (!file.exists()) {
+            throw SecurityException("No se encontró el APK en Descargas para abrirlo.")
+        }
+        val uri: Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        } else {
+            Uri.fromFile(file)
+        }
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+        }
+        // Conceder permiso de lectura al instalador
+        val resInfoList = context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        for (resolveInfo in resInfoList) {
+            val packageName = resolveInfo.activityInfo.packageName
+            context.grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(intent)
     }
 }

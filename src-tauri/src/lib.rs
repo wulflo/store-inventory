@@ -225,3 +225,12 @@ pub fn run() {
     .run(tauri::generate_context!())
     .expect("error al ejecutar Inventario Tienda");
 }
+
+/* ------------------------------------------------------------------ */
+/* Utilidades                                                          */
+/* ------------------------------------------------------------------ */
+
+#[tauri::command]
+fn store_space_info() -> Result<serde_json::Value, String> {
+  Ok(serde_json::json!({ "ok": true }))
+}
