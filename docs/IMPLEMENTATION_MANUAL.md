@@ -1,5 +1,11 @@
 # Implementation Manual: Local-First Inventory App with P2P LAN Sync (Android + Desktop)
 
+> **OBSOLETO para v0.2.11:** este manual describe la versión 0.1.7, que incluía
+> sincronización P2P/LAN. Esa función fue eliminada en v0.2.11. La fuente de
+> verdad actual es `docs/REFACTOR_VAULT_CHECKLIST.md`; para compartir datos
+> entre equipos se usa una bóveda externa sincronizada (Google Drive +
+> Foldersync, Syncthing, etc.).
+
 **Version:** 0.1.7  
 **Date:** 2026-10-27  
 **Stack:** Tauri v2 + Rust + TypeScript (vanilla) + Vite  

@@ -302,3 +302,21 @@ npx tauri android build --debug --apk --target aarch64
 - En hardware real hay que instalar el APK de release; si hay una build debug
   instalada con otra firma, primero hay que desinstalarla (perderá los datos
   locales de la app, no los de la bóveda).
+
+## 9. Sincronización externa de la bóveda
+
+La app **no** sincroniza por red. Google Drive + Foldersync (o Syncthing, etc.)
+es una forma válida de compartir la bóveda, pero es sincronización de archivos,
+no sync en vivo:
+
+- En Android, elegir en la app una carpeta **local** que Foldersync sincronice
+  con Drive. No elegir la carpeta virtual del proveedor de Google Drive.
+- En la PC, elegir la carpeta local espejo de Google Drive.
+- Usar la misma contraseña maestra o código de recuperación. El llavero viaja
+  dentro de `<bóveda>/omega/keys/keyring.json`.
+- **Un solo equipo escribe a la vez.** Cerrar la app antes de sincronizar y
+  esperar a que Foldersync/Drive terminen en ambas direcciones.
+- No editar en los dos equipos al mismo tiempo: Drive puede crear copias de
+  conflicto y la app no fusiona archivos `.jsonl` conflictivos.
+- `longlife` también se sincroniza si está dentro de la bóveda. Si se excluye
+  de Foldersync, no habrá copias longlife en la nube.

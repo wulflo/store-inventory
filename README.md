@@ -56,11 +56,10 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 - Preferences: currency (ARS/USD/EUR) and light/dark theme.
 - Export/import JSON backup (all events).
 - Initial CSV import (products, customers, orders) with column mapping.
-- **P2P Sync (LAN):** pairing via 6-digit SAS code with mutual TLS 1.3 and pinned self-signed certificates. Only accepts private LAN addresses; reconciliation by domain with deduplication by ID.
+- **Bóveda elegida por el usuario:** los datos viven en `<bóveda>/omega/`; las copias diarias en `<bóveda>/longlife/YYYY-MM-DD/`, con retención de 7 días. No hay sincronización P2P/LAN integrada.
+- **Sincronización externa opcional:** la bóveda se puede compartir con Google Drive + Foldersync, Syncthing u otro agente de archivos. La app solo lee/escribe la carpeta; no fusiona conflictos.
 - **Updates:** signed search and installation with minisign. Desktop uses Tauri updater; Android downloads APK, verifies signature and saves to **Downloads** folder for manual installation.
-- **Daily backups:** automatic rotation to `backups/daily/YYYY-MM-DD/`, per-device vault copy (filesystem on desktop, SAF on Android), SHA-256 manifest and append-only restore from the vault.
-- **Auto-sync:** debounced sync after local changes, periodic sync, exponential backoff and battery-saver mode.
-- **Payload encryption (opt-in):** random 32-byte DEK that encrypts each event `payload` with XChaCha20-Poly1305; the DEK is wrapped (Argon2id) by a master password **and** a one-time recovery code. Metadata stays in plaintext for ordering and sync. The keyring lives in `keys/keyring.json`; the unlocked key only in RAM. Sharing data across devices requires importing the same keyring (`Ajustes → Cifrado`). Backups include the keyring. Password change re-wraps the DEK; key rotation re-encrypts everything.
+- **Payload encryption (obligatoria):** random 32-byte DEK that encrypts each event `payload` with XChaCha20-Poly1305; the DEK is wrapped (Argon2id) by a master password **and** a one-time recovery code. Metadata stays in plaintext for ordering. The keyring lives in `<bóveda>/omega/keys/keyring.json`; the unlocked key only in RAM. La misma contraseña/código abre la bóveda en otro equipo. Password change re-wraps the DEK; key rotation re-encrypts everything.
 - Risk zone (clear data — pending full implementation).
 
 ### Data Semantics
@@ -74,10 +73,10 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 - 100% local / offline, no cloud or mandatory accounts.
 - Web development: `npm run dev` (Vite at `http://127.0.0.1:1420`).
 - Native app: `npm run app:dev` (Tauri) / `npm run app:build`.
-- Desktop: data in `~/.local/share/inventario-tienda` (Linux).
-- Android: data in app private storage (`app_data_dir`).
-- Direct P2P sync over LAN (mutual TLS + SAS pairing). Can also sync via external agents over a data folder (Syncthing/Drive).
-- Manual JSON export plus daily automatic backups (local and external vault).
+- Desktop: el usuario elige una carpeta bóveda; los datos quedan en `<bóveda>/omega`.
+- Android: el usuario elige una carpeta mediante SAF; los datos quedan en `<bóveda>/omega`.
+- No hay sync P2P/LAN. Para compartir entre equipos, usar un agente externo sobre la carpeta (Google Drive + Foldersync, Syncthing, etc.) y no editar en dos equipos a la vez.
+- Manual JSON export plus daily snapshots in `<bóveda>/longlife` (local o nube si la bóveda está sincronizada).
 
 ### Development Requirements
 - Node 20+ and npm.
