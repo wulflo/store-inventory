@@ -316,7 +316,11 @@ no sync en vivo:
   dentro de `<bóveda>/omega/keys/keyring.json`.
 - **Un solo equipo escribe a la vez.** Cerrar la app antes de sincronizar y
   esperar a que Foldersync/Drive terminen en ambas direcciones.
-- No editar en los dos equipos al mismo tiempo: Drive puede crear copias de
-  conflicto y la app no fusiona archivos `.jsonl` conflictivos.
+- Si Foldersync reemplaza el archivo, las dos copias convergen a una sola
+  versión: se descarta lo editado en la otra. Si en cambio crea una copia de
+  conflicto, la app no la lee. No hay merge automático de `.jsonl`.
+- Esa política de reemplazo puede ser aceptable si se edita en un solo equipo
+  por vez y se usa el historial de versiones de Drive para recuperar. No evita
+  la pérdida de eventos si los dos equipos editaron entre sincronizaciones.
 - `longlife` también se sincroniza si está dentro de la bóveda. Si se excluye
   de Foldersync, no habrá copias longlife en la nube.
