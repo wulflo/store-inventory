@@ -1,8 +1,8 @@
 # Refactor: bóveda elegida por el usuario + longlife + cifrado obligatorio
 
-> **Estado:** implementado y verificado en emulador Android; pendiente de
-> publicar el release v0.2.12. Este documento es la fuente de verdad para
-> retomar el trabajo si se corta la conexión, la sesión o el build.
+> **Estado:** implementado y verificado en emulador Android; release v0.2.12
+> preparado. Este documento es la fuente de verdad para retomar el trabajo si
+> se corta la conexión, la sesión o el build.
 >
 > Última actualización: 2026-10-28
 
@@ -301,11 +301,17 @@ npx tauri android build --debug --apk --target aarch64
 5. Actualizar este documento al terminar cada etapa (marcar `[x]` y anotar
    decisiones nuevas).
 
-## 8. Release v0.2.11
+## 8. Release v0.2.12
 
-- Versión de la app: `0.2.11`.
-- Android: `versionName=0.2.11`, `versionCode=2011`.
-- Tag/release: `v0.2.11`.
+- Versión de la app: `0.2.12`.
+- Android: `versionName=0.2.12`, `versionCode=2012`.
+- Tag/release: `v0.2.12`.
+- Cambio principal: el snapshot `longlife` del día se refresca sin borrar la
+  copia completa. El debounce es de 3 minutos y además se fuerza el refresco al
+  iniciar, al pasar a segundo plano, al cerrar la ventana y cada 24 h.
+- El refresco compara hashes, reescribe solo archivos cambiados, restaura
+  archivos faltantes y elimina archivos obsoletos. `force: true` queda solo
+  para “Regenerar desde cero”.
 - El APK universal firmado se publica en GitHub Releases junto con
   `latest.json`; la app lo descarga a `Descargas/InventarioTienda/`.
 - En hardware real hay que instalar el APK de release; si hay una build debug
