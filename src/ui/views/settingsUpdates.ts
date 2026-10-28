@@ -58,7 +58,7 @@ export function settingsUpdatesCard(): HTMLElement {
               'div',
               { class: 'row', style: { gap: '8px', alignItems: 'center' } },
               el('span', {
-                class: check.available ? 'sync-dot on' : 'sync-dot',
+                class: check.available ? 'status-dot on' : 'status-dot',
               }),
               el('span', {
                 class: 'small strong',
@@ -93,7 +93,7 @@ export function settingsUpdatesCard(): HTMLElement {
           )
         : null,
       message
-        ? el('p', { class: 'small sync-message', role: 'status', text: message })
+        ? el('p', { class: 'small status-message', role: 'status', text: message })
         : null,
       el(
         'div',

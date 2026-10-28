@@ -132,6 +132,8 @@ export async function showUnlockScreen(host: HTMLElement, root: string): Promise
 
     const overlay = el('div', { class: 'boot' }, card);
     host.appendChild(overlay);
-    setTimeout(() => input.focus(), 60);
+    if (!window.matchMedia('(pointer: coarse)').matches) {
+      setTimeout(() => input.focus(), 60);
+    }
   });
 }

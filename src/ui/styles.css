@@ -1535,9 +1535,21 @@ table.data td.num {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  /* `safe` evita que el contenido alto (teclado abierto en Android) quede
+     recortado arriba: si no entra, el contenedor pasa a scroll. */
+  justify-content: safe center;
   gap: 16px;
+  padding: 24px 16px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   background: var(--bg);
-  z-index: 9999;
+  z-index: 900;
+}
+
+.boot > * {
+  flex-shrink: 0;
 }
 
 .boot-mark {
@@ -2338,175 +2350,26 @@ textarea {
 }
 
 /* ------------------------------------------------------------------
-   21. Sincronización P2P y actualizaciones
+   21. Actualizaciones
    ------------------------------------------------------------------ */
 
-.sync-status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-3);
-}
-.sync-status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.sync-dot {
+.status-dot {
   width: 9px;
   height: 9px;
   border-radius: 50%;
   background: var(--text-3);
   flex: 0 0 auto;
 }
-.sync-dot.on {
+.status-dot.on {
   background: var(--success);
   box-shadow: 0 0 0 3px var(--success-soft);
 }
-.sync-identity {
-  display: grid;
-  gap: 2px;
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
-  margin-bottom: var(--space-3);
-}
-.sync-identity-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-height: 26px;
-}
-.sync-wrap {
-  overflow-wrap: anywhere;
-  text-align: right;
-}
-.sync-divider {
-  height: 1px;
-  background: var(--border);
-  margin: var(--space-4) 0;
-}
-.sync-pair-actions .field {
-  margin-bottom: var(--space-2);
-}
-.sync-inline {
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-.sync-inline input {
-  flex: 1 1 150px;
-  min-width: 0;
-}
-.sync-or {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-3) 0;
-  color: var(--text-3);
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.sync-or::before,
-.sync-or::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-.sync-pending {
-  display: grid;
-  justify-items: center;
-  gap: var(--space-2);
-  text-align: center;
-  padding: var(--space-4) var(--space-3);
-  border: 1px dashed var(--primary);
-  border-radius: var(--radius-lg);
-  background: var(--primary-soft);
-}
-.sync-sas {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: clamp(30px, 9vw, 44px);
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: var(--primary);
-  line-height: 1.1;
-}
-.sync-pending-meta {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-2) var(--space-4);
-}
-.sync-waiting {
-  display: grid;
-  place-items: center;
-  height: 40px;
-}
-.sync-spinner {
-  width: 26px;
-  height: 26px;
-  border: 3px solid var(--primary-soft);
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: sync-spin 0.9s linear infinite;
-}
-@keyframes sync-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.sync-message {
+.status-message {
   margin-top: var(--space-3);
   padding: var(--space-3);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
   overflow-wrap: anywhere;
-}
-.sync-peers-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-top: var(--space-5);
-  margin-bottom: var(--space-2);
-  flex-wrap: wrap;
-}
-.sync-peers {
-  display: grid;
-  gap: var(--space-2);
-}
-.sync-peer {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-}
-.sync-peer-main {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-.sync-peer-name {
-  font-weight: 600;
-  color: var(--text);
-}
-.sync-peer-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  flex: 0 0 auto;
 }
 .update-result {
   margin-top: var(--space-3);
@@ -2514,25 +2377,6 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
-}
-
-@media (max-width: 430px) {
-  .sync-peer {
-    flex-direction: column;
-  }
-  .sync-peer-actions {
-    justify-content: flex-start;
-    width: 100%;
-  }
-  .sync-peer-actions .btn {
-    flex: 1 1 auto;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sync-spinner {
-    animation: none;
-  }
 }
 
 /* ------------------------------------------------------------------

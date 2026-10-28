@@ -54,13 +54,6 @@ export class TauriEventStore implements EventStore {
     });
     this.lastSeen.set(domain, Date.now());
     this.emit(domain);
-    // Disparar sync automático (debounce)
-    try {
-      const { onStoreAppended } = await import('../sync/autoSync');
-      onStoreAppended();
-    } catch {
-      // ignore
-    }
   }
 
   async read(domain: Domain): Promise<DomainEvent[]> {
@@ -107,7 +100,16 @@ export class TauriEventStore implements EventStore {
   }
 
   location(): string {
-    return this.root ?? '(sin carpeta)';
+    if (!this.root) return '(sin carpeta)';
+    if (this.root.trimStart().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(this.root) as { topTreeUri?: string };
+        if (parsed?.topTreeUri) return 'Bóveda SAF (omega)';
+      } catch {
+        /* La ruta local puede empezar con `{` por casualidad. */
+      }
+    }
+    return this.root;
   }
 
   async exportAll(): Promise<ExportBundle> {
@@ -149,7 +151,7 @@ export class TauriEventStore implements EventStore {
   }
 
   /* ---------------------------------------------------------------- */
-  /* Observación de cambios externos (Syncthing/Drive)                 */
+  /* Observación de cambios externos en la carpeta                     */
   /* ---------------------------------------------------------------- */
 
   private startPolling(): void {
@@ -168,7 +170,7 @@ export class TauriEventStore implements EventStore {
           }
         }
       } catch {
-        /* la carpeta puede estar brevemente inaccesible (sync en curso) */
+        /* la carpeta puede estar brevemente inaccesible (otra app escribiendo) */
       }
     }, 3000);
   }

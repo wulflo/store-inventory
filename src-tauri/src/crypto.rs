@@ -16,13 +16,10 @@ use chacha20poly1305::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::keys;
+use crate::{keys, storage};
 
 /* ------------------------------------------------------------------ */
 /* Clave en memoria                                                    */
@@ -45,11 +42,19 @@ impl std::fmt::Debug for KeyMaterial {
 
 /// Error reconocible por el frontend para pedir el desbloqueo.
 pub const LOCKED_PREFIX: &str = "ENC_LOCKED:";
+/// Error reconocible por el frontend cuando todavía no hay llavero.
+pub const NOT_SETUP_PREFIX: &str = "ENC_NOT_SETUP:";
 const LOCKED_DETAIL: &str =
   " Los datos están cifrados. Desbloqueá con tu contraseña maestra para continuar.";
+const NOT_SETUP_DETAIL: &str =
+  " Todavía no configuraste el cifrado. Creá una contraseña maestra para empezar.";
 
 fn locked_error() -> String {
   format!("{LOCKED_PREFIX}{LOCKED_DETAIL}")
+}
+
+fn not_setup_error() -> String {
+  format!("{NOT_SETUP_PREFIX}{NOT_SETUP_DETAIL}")
 }
 
 static CURRENT: Mutex<std::collections::BTreeMap<String, KeyMaterial>> =
@@ -108,12 +113,12 @@ pub fn is_enabled(root: &str) -> bool {
 
 /// Resuelve la clave para leer/escribir.
 ///
-/// - Sin llavero → `Ok(None)` (modo texto plano, compatible hacia atrás).
+/// - Sin llavero → error `ENC_NOT_SETUP:` (el cifrado es obligatorio).
 /// - Con llavero y desbloqueado → `Ok(Some(key))`.
 /// - Con llavero y bloqueado → error `ENC_LOCKED:`.
 pub fn resolve_key(root: &str) -> Result<Option<KeyMaterial>, String> {
   if !is_enabled(root) {
-    return Ok(None);
+    return Err(not_setup_error());
   }
   current_key(root).map(Some).ok_or_else(|| locked_error())
 }
@@ -249,7 +254,7 @@ pub fn encrypt_event_line(line: &str, km: &KeyMaterial) -> Result<String, String
   serde_json::to_string(&event).map_err(|e| format!("No se pudo serializar el evento: {e}"))
 }
 
-/// Cifra un payload ya parseado. Idempotente. Se usa también al recibir por sync.
+/// Cifra un payload ya parseado. Idempotente. Se usa también al importar eventos.
 pub fn encrypt_event_value(
   id: &str,
   event_type: &str,
@@ -269,6 +274,7 @@ pub fn encrypt_event_value(
 /// - Texto plano → se cifrará al guardar.
 /// - Cifrado con el mismo `kid` → se guarda tal cual.
 /// - Cifrado con otra clave → error (no se guarda basura ilegible).
+#[cfg(test)]
 pub fn ensure_compatible_payload(payload: &Value, km: &KeyMaterial) -> Result<(), String> {
   if let Some(enc) = unwrap_encrypted(payload) {
     match enc.kid {
@@ -419,61 +425,39 @@ pub struct MigrationReport {
   pub backup_dir: String,
 }
 
-fn jsonl_files(root: &str) -> Result<Vec<PathBuf>, String> {
-  let dir = crate::event_store::events_dir(root);
-  let entries = match fs::read_dir(&dir) {
-    Ok(entries) => entries,
-    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-    Err(e) => return Err(format!("No se pudo leer la carpeta de eventos: {e}")),
-  };
-  let mut files = Vec::new();
-  for entry in entries.flatten() {
-    let path = entry.path();
-    if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-      files.push(path);
-    }
-  }
+fn jsonl_files(root: &str) -> Result<Vec<String>, String> {
+  let mut files: Vec<String> = storage::list_dir(root, "events")?
+    .into_iter()
+    .filter(|name| name.ends_with(".jsonl"))
+    .map(|name| format!("events/{name}"))
+    .collect();
   files.sort();
   Ok(files)
 }
 
+fn file_name(relative: &str) -> &str {
+  relative.rsplit('/').next().unwrap_or(relative)
+}
+
 /// Copia los archivos de eventos antes de una operación destructiva.
+/// Devuelve una ruta relativa a la raíz de datos (`backups/.../events`).
 fn backup_events(root: &str) -> Result<String, String> {
   let stamp = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_millis())
     .unwrap_or(0);
-  let dest = Path::new(root)
-    .join("backups")
-    .join(format!("pre-encryption-{stamp}"))
-    .join("events");
-  fs::create_dir_all(&dest).map_err(|e| format!("No se pudo crear el respaldo: {e}"))?;
+  let backup_dir = format!("backups/pre-encryption-{stamp}/events");
   for src in jsonl_files(root)? {
-    if let Some(name) = src.file_name() {
-      fs::copy(&src, dest.join(name)).map_err(|e| {
-        format!(
-          "No se pudo respaldar {:?} antes de cifrar: {e}",
-          src.file_name().unwrap_or_default()
-        )
-      })?;
-    }
+    let bytes = storage::read_bytes(root, &src)?
+      .ok_or_else(|| format!("No se encontró '{src}' al respaldar."))?;
+    storage::write_bytes(
+      root,
+      &format!("{backup_dir}/{}", file_name(&src)),
+      &bytes,
+    )
+    .map_err(|e| format!("No se pudo respaldar {src} antes de cifrar: {e}"))?;
   }
-  Ok(dest.to_string_lossy().to_string())
-}
-
-fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
-  let tmp = path.with_extension("jsonl.tmp");
-  {
-    let mut file =
-      fs::File::create(&tmp).map_err(|e| format!("No se pudo escribir {:?}: {e}", path))?;
-    file
-      .write_all(contents.as_bytes())
-      .map_err(|e| format!("No se pudo escribir {:?}: {e}", path))?;
-    file
-      .sync_all()
-      .map_err(|e| format!("No se pudo sincronizar {:?}: {e}", path))?;
-  }
-  fs::rename(&tmp, path).map_err(|e| format!("No se pudo reemplazar {:?}: {e}", path))
+  Ok(backup_dir)
 }
 
 /// `true` si la línea es un evento cifrado con el `kid` indicado.
@@ -489,27 +473,17 @@ fn line_encrypted_with(line: &str, kid: &str) -> bool {
 /// Restaura los eventos desde un respaldo creado por `backup_events`.
 ///
 /// Se usa para revertir una migración que falló a mitad de camino. Cada archivo
-/// se copia a un temporal y se renombra, para no dejar un `.jsonl` truncado.
+/// se escribe de forma atómica en local, para no dejar un `.jsonl` truncado.
 fn restore_events(root: &str, backup_dir: &str) -> Result<usize, String> {
-  let dest_dir = crate::event_store::events_dir(root);
-  fs::create_dir_all(&dest_dir)
-    .map_err(|e| format!("No se pudo recrear la carpeta de eventos: {e}"))?;
-  let entries = fs::read_dir(backup_dir)
-    .map_err(|e| format!("No se pudo leer el respaldo {backup_dir}: {e}"))?;
   let mut restored = 0usize;
-  for entry in entries.flatten() {
-    let src = entry.path();
-    if src.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+  for name in storage::list_dir(root, backup_dir)? {
+    if !name.ends_with(".jsonl") {
       continue;
     }
-    let dest = dest_dir.join(entry.file_name());
-    let tmp = dest.with_extension("jsonl.restore.tmp");
-    fs::copy(&src, &tmp).map_err(|e| format!("No se pudo restaurar {:?}: {e}", src))?;
-    fs::File::open(&tmp)
-      .and_then(|f| f.sync_all())
-      .map_err(|e| format!("No se pudo sincronizar la restauración: {e}"))?;
-    fs::rename(&tmp, &dest)
-      .map_err(|e| format!("No se pudo reemplazar {:?} al restaurar: {e}", dest))?;
+    let bytes = storage::read_bytes(root, &format!("{backup_dir}/{name}"))?
+      .ok_or_else(|| format!("No se encontró el respaldo de '{name}'."))?;
+    storage::write_atomic(root, &format!("events/{name}"), &bytes)
+      .map_err(|e| format!("No se pudo restaurar '{name}': {e}"))?;
     restored += 1;
   }
   Ok(restored)
@@ -523,9 +497,9 @@ fn migrate_files(
 ) -> Result<(usize, usize), String> {
   let mut total_events = 0usize;
   let mut files = 0usize;
-  for path in jsonl_files(root)? {
-    let text = fs::read_to_string(&path)
-      .map_err(|e| format!("No se pudo leer {:?}: {e}", path))?;
+  for relative in jsonl_files(root)? {
+    let text = storage::read_string(root, &relative)?
+      .ok_or_else(|| format!("No se encontró '{relative}'."))?;
     let mut out = String::with_capacity(text.len() + 256);
     let mut count = 0usize;
     for line in text.lines() {
@@ -534,7 +508,8 @@ fn migrate_files(
         continue;
       }
       // En una adopción de llavero puede haber eventos que ya llegaron con la
-      // clave nueva: se dejan intactos en vez de intentar descifrarlos con la vieja.
+      // clave nueva: se dejan intactos en vez de intentar descifrarlos con la
+      // vieja.
       let already_target = line_encrypted_with(trimmed, &to.kid);
       let plain = if already_target {
         trimmed.to_string()
@@ -553,7 +528,7 @@ fn migrate_files(
       count += 1;
     }
     if count > 0 {
-      write_atomic(&path, &out)?;
+      storage::write_atomic(root, &relative, out.as_bytes())?;
       total_events += count;
       files += 1;
     }
@@ -564,9 +539,9 @@ fn migrate_files(
 /// Verifica que todos los archivos se descifren con la clave nueva.
 fn verify_files(root: &str, km: &KeyMaterial) -> Result<usize, String> {
   let mut total = 0usize;
-  for path in jsonl_files(root)? {
-    let text = fs::read_to_string(&path)
-      .map_err(|e| format!("No se pudo verificar {:?}: {e}", path))?;
+  for relative in jsonl_files(root)? {
+    let text = storage::read_string(root, &relative)?
+      .ok_or_else(|| format!("No se encontró '{relative}'."))?;
     for line in text.lines() {
       let trimmed = line.trim();
       if trimmed.is_empty() {
@@ -877,7 +852,7 @@ pub fn crypto_read_events(root: String, domain: String) -> Result<String, String
 
 /// Devuelve el llavero (ya envuelto; no contiene la contraseña) para llevarlo
 /// a otro equipo. Sin él, la misma contraseña en otro equipo crearía una DEK
-/// distinta y el sync fallaría por `kid` incompatible.
+/// distinta y los datos no se podrían descifrar por `kid` incompatible.
 #[tauri::command]
 pub fn crypto_keyring_json(root: String) -> Result<String, String> {
   let keyring = keys::load(&root)?.ok_or_else(|| {
@@ -1076,6 +1051,8 @@ pub fn crypto_adopt_keyring(
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::fs;
+  use std::path::Path;
 
   fn temp_root(tag: &str) -> String {
     let nanos = std::time::SystemTime::now()
@@ -1110,6 +1087,13 @@ mod tests {
       }
     })
     .to_string()
+  }
+
+  /// Escribe texto plano directamente, simulando datos de una versión previa.
+  fn write_plain_event(root: &str, domain: &str, event: &str) {
+    let dir = Path::new(root).join("events");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(format!("{domain}.jsonl")), format!("{event}\n")).unwrap();
   }
 
   #[test]
@@ -1290,12 +1274,7 @@ mod tests {
     set_current(&root, km.key, km.kid.clone());
     let domain = "orders";
 
-    crate::event_store::store_append(
-      root.clone(),
-      domain.to_string(),
-      vec![sample_event("evt-1", "Order.Created")],
-    )
-    .unwrap();
+    write_plain_event(&root, domain, &sample_event("evt-1", "Order.Created"));
 
     let plain = read_events_decrypted(&root, domain).unwrap();
     let event: Value = serde_json::from_str(plain.trim()).unwrap();
@@ -1309,7 +1288,18 @@ mod tests {
   #[test]
   fn reading_missing_domain_returns_empty_text() {
     let root = temp_root("missing");
+    let _ = km("clave-de-prueba", &root);
+    set_current(&root, [7u8; 32], "kid".to_string());
     assert_eq!(read_events_decrypted(&root, "orders").unwrap(), "");
+    clear_current_for(&root);
+    let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn reading_without_keyring_fails_with_not_setup() {
+    let root = temp_root("not-setup");
+    let err = read_events_decrypted(&root, "orders").unwrap_err();
+    assert!(err.starts_with(NOT_SETUP_PREFIX), "mensaje inesperado: {err}");
     let _ = fs::remove_dir_all(&root);
   }
 
@@ -1317,16 +1307,14 @@ mod tests {
   fn enable_migrates_existing_plaintext_events() {
     let root = temp_root("enable");
     let domain = "orders";
-    crate::event_store::store_append(
-      root.clone(),
-      domain.to_string(),
-      vec![sample_event("evt-1", "Order.Created")],
-    )
-    .unwrap();
+    write_plain_event(&root, domain, &sample_event("evt-1", "Order.Created"));
 
     let result = crypto_enable(root.clone(), "contraseña-segura".to_string()).unwrap();
     assert_eq!(result.report.events, 1);
-    assert!(Path::new(&result.report.backup_dir).join("orders.jsonl").exists());
+    assert!(Path::new(&root)
+      .join(&result.report.backup_dir)
+      .join("orders.jsonl")
+      .exists());
     assert_eq!(result.kid, keys::kid_for(&current_key(&root).unwrap().key));
 
     // En disco ya no hay texto plano.
@@ -1346,12 +1334,7 @@ mod tests {
   fn restore_events_reverts_to_the_backup_copy() {
     let root = temp_root("restore");
     let domain = "orders";
-    crate::event_store::store_append(
-      root.clone(),
-      domain.to_string(),
-      vec![sample_event("evt-1", "Order.Created")],
-    )
-    .unwrap();
+    write_plain_event(&root, domain, &sample_event("evt-1", "Order.Created"));
     let backup_dir = backup_events(&root).unwrap();
 
     // Simular una migración parcial: el archivo quedó a medias.
@@ -1588,12 +1571,7 @@ mod tests {
   fn import_keyring_encrypts_preexisting_plaintext_events() {
     let root = temp_root("import-plain");
     let domain = "orders";
-    crate::event_store::store_append(
-      root.clone(),
-      domain.to_string(),
-      vec![sample_event("evt-1", "Order.Created")],
-    )
-    .unwrap();
+    write_plain_event(&root, domain, &sample_event("evt-1", "Order.Created"));
 
     let created =
       keys::create("contraseña-segura", keys::KdfParams::fast().unwrap()).unwrap();
@@ -1604,7 +1582,10 @@ mod tests {
     )
     .unwrap();
     assert_eq!(report.events, 1);
-    assert!(Path::new(&report.backup_dir).join("orders.jsonl").exists());
+    assert!(Path::new(&root)
+      .join(&report.backup_dir)
+      .join("orders.jsonl")
+      .exists());
 
     let raw = fs::read_to_string(Path::new(&root).join("events/orders.jsonl")).unwrap();
     assert!(!raw.contains("Ana Gómez"));
@@ -1722,7 +1703,7 @@ mod tests {
     let password = "auditoria-cifrado-2026";
     let result = crypto_enable(root.clone(), password.to_string()).unwrap();
     assert_eq!(result.report.events, before);
-    assert!(Path::new(&result.report.backup_dir).exists());
+    assert!(Path::new(&root).join(&result.report.backup_dir).exists());
 
     // Ninguna línea debe quedar con payload en texto plano.
     for path in jsonl_files(&root).unwrap() {

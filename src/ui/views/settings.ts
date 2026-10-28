@@ -9,10 +9,9 @@ import { CURRENCIES } from '../../core/money';
 import { APP_VERSION } from '../../core/version';
 import { ACCENTS, applyTheme, normalizeAccent, normalizeTheme, type AccentId, type ThemeName } from '../theme';
 import { getLanguage, setLanguage, type Language } from '../../core/i18n';
-import { settingsSyncCard } from './settingsSync';
 import { settingsUpdatesCard } from './settingsUpdates';
-import { settingsAutoSyncCard } from './settingsAutoSync';
 import { settingsCryptoCard } from './settingsCrypto';
+import { settingsVaultCard } from './settingsVault';
 
 export function settingsView(app: App, shell: Shell): HTMLElement {
   const view = el('div');
@@ -169,7 +168,7 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
         {},
         el('p', {
           class: 'muted mb-4',
-          text: 'Tus datos viven en archivos .jsonl (append-only) dentro de una carpeta común. Podés copiar esa carpeta a un disco externo o a un servicio de sincronización: nunca se corrompe.',
+          text: 'Tus datos viven en archivos .jsonl (append-only) dentro de <bóveda>/omega. La carpeta la elegís vos y podés copiarla a un disco externo cuando quieras.',
         }),
         el(
           'div',
@@ -193,7 +192,7 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
             class: 'btn btn-ghost',
             type: 'button',
             on: { click: (e: Event) => { e.preventDefault(); shell.router.navigate('/respaldos'); } },
-          }, icon('settings', 18), 'Respaldos diarios'),
+          }, icon('settings', 18), 'Copias longlife'),
         ),
       ),
     }),
@@ -210,7 +209,7 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
           ? emptyState({
               icon: 'settings',
               title: 'Sin otros dispositivos',
-              message: 'Cuando sincronices con el celular, aparecerán acá.',
+              message: 'Este es el único dispositivo registrado en esta bóveda.',
             })
           : el(
               'div',
@@ -293,13 +292,12 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
     }),
   );
 
-  /* ---------------- Sincronización P2P ---------------- */
-  view.appendChild(settingsSyncCard(app));
+  /* ---------------- Bóveda y cifrado ---------------- */
+  view.appendChild(settingsVaultCard(shell));
+  view.appendChild(settingsCryptoCard(app));
 
   /* ---------------- Actualizaciones ---------------- */
   view.appendChild(settingsUpdatesCard());
-  view.appendChild(settingsAutoSyncCard(app));
-  view.appendChild(settingsCryptoCard(app));
 
   return view;
 }
@@ -307,9 +305,16 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
 function infoRow(label: string, value: string): HTMLElement {
   return el(
     'div',
-    { class: 'row-between', style: { padding: '8px 0', borderBottom: '1px solid var(--border)' } },
+    {
+      class: 'row-between',
+      style: { padding: '8px 0', borderBottom: '1px solid var(--border)', gap: '12px' },
+    },
     el('span', { class: 'small muted', text: label }),
-    el('span', { class: 'small strong mono', text: value }),
+    el('span', {
+      class: 'small strong mono',
+      text: value,
+      style: { maxWidth: '62%', textAlign: 'right', overflowWrap: 'anywhere' },
+    }),
   );
 }
 
@@ -325,7 +330,7 @@ async function exportBackup(app: App): Promise<void> {
   const ok = await confirmDialog({
     title: 'Exportar copia de seguridad',
     message:
-      'El archivo contiene todos los eventos de la tienda. Guardalo en un lugar privado y no lo compartas: si el cifrado está desactivado, los datos pueden leerse en texto plano.',
+      'El archivo contiene todos los eventos de la tienda, con los payloads cifrados tal como están en disco. Guardalo en un lugar privado y no lo compartas: sin tu contraseña maestra no se pueden leer, pero sigue siendo información sensible.',
     confirmLabel: 'Exportar',
   });
   if (!ok) return;

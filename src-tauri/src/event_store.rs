@@ -1,11 +1,9 @@
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::storage;
 
 const EVENTS_SUBDIR: &str = "events";
 const DEVICE_ID_FILE: &str = "device_id";
@@ -48,96 +46,69 @@ fn validate_event_line(line: &str) -> Result<(), String> {
 /**
  * Serializa las escrituras de eventos dentro del proceso.
  *
- * El frontend y el motor de sincronización pueden hacer append casi al mismo
- * tiempo. Sin este lock, dos `writeln!` podrían intercalar bytes y corromper
- * una línea JSONL.
+ * El frontend y las migraciones pueden hacer append casi al mismo tiempo. Sin
+ * este lock, dos escrituras podrían intercalar bytes y corromper una línea
+ * JSONL (especialmente en SAF, donde el append es leer + reescribir).
  */
 pub(crate) static EVENTS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AppendArgs {
-  pub root: String,
-  pub domain: String,
-  pub lines: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReadArgs {
-  pub root: String,
-  pub domain: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MtimesArgs {
-  pub root: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DeviceIdArgs {
-  pub root: String,
-}
-
 /* ------------------------------------------------------------------ */
-/* Rutas                                                              */
+/* Rutas relativas a la raíz de datos (omega)                         */
 /* ------------------------------------------------------------------ */
 
-pub(crate) fn events_dir(root: &str) -> PathBuf {
-  Path::new(root).join(EVENTS_SUBDIR)
-}
-
-pub(crate) fn domain_path(root: &str, domain: &str) -> PathBuf {
-  events_dir(root).join(format!("{}.jsonl", domain))
-}
-
-fn device_id_path(root: &str) -> PathBuf {
-  Path::new(root).join(DEVICE_ID_FILE)
-}
-
-/* ------------------------------------------------------------------ */
-/* Directorio por defecto                                             */
-/* ------------------------------------------------------------------ */
-
-/** Carpeta por defecto para los datos de la app.
- *
- *  Escritorio (Linux/macOS/Windows): <home>/.local/share/inventario-tienda
- *  Android: se resolverá con el almacenamiento privado de la app cuando
- *  se implemente el backend SAF (pendiente, fase 3).
- */
-#[cfg(not(target_os = "android"))]
-pub fn default_root() -> Result<String, String> {
-  let home = std::env::home_dir()
-    .ok_or_else(|| "No se pudo determinar el directorio personal".to_string())?;
-  let root = home.join(".local/share/inventario-tienda");
-  Ok(root.to_string_lossy().to_string())
+pub(crate) fn domain_rel(domain: &str) -> String {
+  format!("{EVENTS_SUBDIR}/{domain}.jsonl")
 }
 
 /* ------------------------------------------------------------------ */
 /* Comandos                                                           */
 /* ------------------------------------------------------------------ */
 
-/** Crea el layout de carpetas (events/<dominio>.jsonl). Idempotente. */
+/** Crea el layout de carpetas (events/). Idempotente. */
 #[tauri::command]
 pub fn store_ensure_layout(root: String) -> Result<(), String> {
-  let dir = events_dir(&root);
-  fs::create_dir_all(&dir).map_err(|e| format!("No se pudo crear la carpeta de datos: {e}"))?;
+  storage::create_dir_all(&root, EVENTS_SUBDIR)
+    .map_err(|e| format!("No se pudo crear la carpeta de datos: {e}"))?;
+  migrate_legacy_jsonl_names(&root)
+}
+
+/// Repara archivos creados por versiones anteriores en Android: SAF añadía
+/// `.json` a `events/foo.jsonl`, produciendo `foo.jsonl.json` y duplicados
+/// `foo.jsonl (1).json`. Junta su contenido en el nombre canónico.
+fn migrate_legacy_jsonl_names(root: &str) -> Result<(), String> {
+  for name in storage::list_dir(root, EVENTS_SUBDIR)? {
+    let Some(base) = name.strip_suffix(".json") else {
+      continue;
+    };
+    let Some(index) = base.find(".jsonl") else {
+      continue;
+    };
+    let canonical = &base[..index + ".jsonl".len()];
+    let old_rel = format!("{EVENTS_SUBDIR}/{name}");
+    let new_rel = format!("{EVENTS_SUBDIR}/{canonical}");
+    let Some(mut bytes) = storage::read_bytes(root, &old_rel)? else {
+      continue;
+    };
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+      bytes.push(b'\n');
+    }
+    if !bytes.is_empty() {
+      storage::append_bytes(root, &new_rel, &bytes)?;
+    }
+    storage::remove_file(root, &old_rel)?;
+  }
   Ok(())
 }
 
 /** Borra todos los archivos de eventos (.jsonl) del store. */
 #[tauri::command]
 pub fn store_clear(root: String) -> Result<(), String> {
-  let dir = events_dir(&root);
-  if dir.exists() {
-    for entry in fs::read_dir(&dir).map_err(|e| format!("No se pudo leer la carpeta de datos: {e}"))? {
-      let entry = entry.map_err(|e| e.to_string())?;
-      let path = entry.path();
-      if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-        let _ = fs::remove_file(&path);
-      }
+  for name in storage::list_dir(&root, EVENTS_SUBDIR)? {
+    if name.ends_with(".jsonl") {
+      storage::remove_file(&root, &format!("{EVENTS_SUBDIR}/{name}"))?;
     }
   }
-  fs::create_dir_all(&dir).map_err(|e| format!("No se pudo recrear la carpeta de datos: {e}"))?;
-  Ok(())
+  storage::create_dir_all(&root, EVENTS_SUBDIR)
 }
 
 /** Agrega líneas al final de un archivo de dominio (append-only real). */
@@ -152,65 +123,53 @@ pub fn store_append(root: String, domain: String, lines: Vec<String>) -> Result<
       validate_event_line(line)?;
     }
   }
-  let path = domain_path(&root, &domain);
-  if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).map_err(|e| format!("No se pudo crear la carpeta de eventos: {e}"))?;
-  }
-  // Con el cifrado activado, el payload se cifra de forma transparente.
-  // Si el llavero existe pero está bloqueado, esto falla con `ENC_LOCKED:`.
+
+  // El cifrado es obligatorio: sin llavero no se escribe texto plano.
+  // Con llavero bloqueado, esto falla con `ENC_LOCKED:`.
   let key = crate::crypto::resolve_key(&root)?;
   let _guard = EVENTS_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-  let mut file = fs::OpenOptions::new()
-    .create(true)
-    .append(true)
-    .open(&path)
-    .map_err(|e| format!("No se pudo abrir el archivo de dominio para escritura: {e}"))?;
+
+  let mut payload = String::new();
   for line in &lines {
-    if !line.is_empty() {
-      let out = match &key {
-        Some(km) => crate::crypto::encrypt_event_line(line, km)?,
-        None => line.clone(),
-      };
-      writeln!(file, "{out}").map_err(|e| format!("Error escribiendo en el archivo de dominio: {e}"))?;
+    if line.is_empty() {
+      continue;
     }
+    let out = match &key {
+      Some(km) => crate::crypto::encrypt_event_line(line, km)?,
+      None => line.clone(),
+    };
+    payload.push_str(&out);
+    payload.push('\n');
   }
-  file.flush().map_err(|e| format!("Error haciendo flush del archivo de dominio: {e}"))?;
-  Ok(())
+
+  if payload.is_empty() {
+    return Ok(());
+  }
+  storage::append_bytes(&root, &domain_rel(&domain), payload.as_bytes())
 }
 
 /** Lee todo el contenido de un archivo de dominio. Devuelve cadena vacía si no existe. */
 #[tauri::command]
 pub fn store_read(root: String, domain: String) -> Result<String, String> {
   validate_domain(&domain)?;
-  // Se resuelve la clave antes de leer: con el cifrado activado y bloqueado
-  // no se devuelve ni siquiera el texto cifrado.
+  // Se resuelve la clave antes de leer: con el cifrado bloqueado no se
+  // devuelve ni siquiera el texto cifrado.
   let key = crate::crypto::resolve_key(&root)?;
-  let path = domain_path(&root, &domain);
-  let text = match fs::read_to_string(&path) {
-    Ok(text) => text,
-    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
-    Err(e) => return Err(format!("No se pudo leer el archivo de dominio: {e}")),
-  };
+  let text = storage::read_string(&root, &domain_rel(&domain))?
+    .unwrap_or_default();
   match key {
     Some(km) => crate::crypto::decrypt_events_text(&text, &km),
     None => Ok(text),
   }
 }
 
-/** Devuelve los mtimes (ms epoch) de cada archivo de dominio, para detectar cambios externos (Syncthing/Drive). */
+/** Devuelve los mtimes (ms epoch) de cada archivo de dominio. */
 #[tauri::command]
 pub fn store_mtimes(root: String) -> Result<Value, String> {
-  let dir = events_dir(&root);
-  let domains = ALLOWED_DOMAINS;
   let mut out = BTreeMap::new();
-  for domain in domains {
-    let path = dir.join(format!("{domain}.jsonl"));
-    if let Ok(meta) = fs::metadata(&path) {
-      if let Ok(mtime) = meta.modified() {
-        if let Ok(ms) = mtime.duration_since(UNIX_EPOCH) {
-          out.insert(domain.to_string(), Value::Number((ms.as_millis() as i64).into()));
-        }
-      }
+  for domain in ALLOWED_DOMAINS {
+    if let Some(ms) = storage::mtime_ms(&root, &domain_rel(domain))? {
+      out.insert(domain.to_string(), Value::Number((ms as i64).into()));
     }
   }
   Ok(serde_json::to_value(out).map_err(|e| format!("Error serializando mtimes: {e}"))?)
@@ -219,18 +178,14 @@ pub fn store_mtimes(root: String) -> Result<Value, String> {
 /** Lee o genera el identificador de dispositivo persistido junto a los datos. */
 #[tauri::command]
 pub fn store_device_id(root: String) -> Result<String, String> {
-  let path = device_id_path(&root);
-  if let Ok(existing) = fs::read_to_string(&path) {
+  if let Some(existing) = storage::read_string(&root, DEVICE_ID_FILE)? {
     let trimmed = existing.trim();
     if !trimmed.is_empty() {
       return Ok(trimmed.to_string());
     }
   }
   let id = uuid_v7();
-  if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).map_err(|e| format!("No se pudo crear la carpeta de datos: {e}"))?;
-  }
-  fs::write(&path, format!("{id}\n")).map_err(|e| format!("No se pudo persistir el device_id: {e}"))?;
+  storage::write_atomic(&root, DEVICE_ID_FILE, format!("{id}\n").as_bytes())?;
   Ok(id)
 }
 

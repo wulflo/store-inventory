@@ -299,7 +299,7 @@ export function createShell(root: HTMLElement, app: App): Shell {
     );
   }
 
-  // Tras una sincronización el estado cambia, pero la vista actual seguía
+  // Cuando un cambio externo modifica el estado, la vista actual seguía
   // mostrando datos viejos hasta navegar a otra sección. La repintamos sin
   // cambiar de ruta ni el scroll. Si el usuario está escribiendo o hay un
   // modal abierto, esperamos a que termine para no perder lo que ingresó.
@@ -339,7 +339,7 @@ export function createShell(root: HTMLElement, app: App): Shell {
   app.subscribe((event) => {
     if (event.type === 'state') {
       refresh();
-      if (event.reason === 'rebuild' || event.reason.startsWith('sync:')) {
+      if (event.reason === 'rebuild' || event.reason.startsWith('external:')) {
         requestViewRefresh();
       }
     }
@@ -362,6 +362,20 @@ export function createShell(root: HTMLElement, app: App): Shell {
     'Pedido',
   );
   document.body.appendChild(fab);
+
+  // El FAB "Pedido" solo tiene sentido en las vistas de trabajo. En ajustes,
+  // copias, importación o reportes tapaba botones y contenido.
+  const fabHiddenPrefixes = ['/ajustes', '/respaldos', '/longlife', '/importar', '/reportes'];
+  const updateFabVisibility = () => {
+    const path = router.currentPath();
+    fab.style.display = fabHiddenPrefixes.some(
+      (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+    )
+      ? 'none'
+      : '';
+  };
+  window.addEventListener('hashchange', updateFabVisibility);
+  updateFabVisibility();
 
   return {
     router,

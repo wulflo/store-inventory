@@ -26,6 +26,7 @@ import { reportsView } from './ui/views/reports';
 import { settingsView } from './ui/views/settings';
 import { settingsBackupView } from './ui/views/settingsBackup';
 import { importCsvView } from './ui/views/importCsv';
+import type { VaultStatus } from './ui/views/vaultSetup';
 
 /* ------------------------------------------------------------------ */
 /* Arranque                                                            */
@@ -39,10 +40,20 @@ async function boot(): Promise<void> {
   const root = document.getElementById('root');
   if (!root) throw new Error('No se encontró #root');
 
-  /* --- Store --- */
+  /* --- Bóveda y store --- */
   let store: EventStore;
+  let dataRoot: string | null = null;
+
   if (isTauri()) {
-    store = new TauriEventStore();
+    const { invoke } = await import('@tauri-apps/api/core');
+    const status = await invoke<VaultStatus>('vault_status');
+    if (!status.configured || !status.accessible || !status.dataRoot) {
+      const { showVaultSetupScreen } = await import('./ui/views/vaultSetup');
+      dataRoot = await showVaultSetupScreen(root, status);
+    } else {
+      dataRoot = status.dataRoot;
+    }
+    store = new TauriEventStore(dataRoot);
   } else {
     store = new WebEventStore();
   }
@@ -50,6 +61,11 @@ async function boot(): Promise<void> {
   try {
     await store.init();
   } catch (err) {
+    if (isTauri()) {
+      throw new Error(
+        `No se pudo abrir la carpeta bóveda: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     console.error('store init falló', err);
     store = new MemoryEventStore();
     await store.init();
@@ -59,23 +75,21 @@ async function boot(): Promise<void> {
     });
   }
 
-  /* --- Desbloqueo del cifrado (antes de proyectar el estado) --- */
-  if (isTauri()) {
+  /* --- Cifrado obligatorio (antes de proyectar el estado) --- */
+  if (isTauri() && dataRoot) {
     const { invoke } = await import('@tauri-apps/api/core');
-    const storeRoot =
-      typeof (store as any).getRoot === 'function'
-        ? ((store as TauriEventStore).getRoot() ?? null)
-        : null;
-    if (storeRoot) {
-      const state = await invoke<{
-        enabled: boolean;
-        unlocked: boolean;
-        kid?: string | null;
-      }>('crypto_boot_state', { root: storeRoot });
-      if (state.enabled && !state.unlocked) {
-        const { showUnlockScreen } = await import('./ui/views/unlock');
-        await showUnlockScreen(root, storeRoot);
-      }
+    const state = await invoke<{
+      enabled: boolean;
+      unlocked: boolean;
+      kid?: string | null;
+    }>('crypto_boot_state', { root: dataRoot });
+
+    if (!state.enabled) {
+      const { showCryptoSetupScreen } = await import('./ui/views/cryptoSetup');
+      await showCryptoSetupScreen(root, dataRoot);
+    } else if (!state.unlocked) {
+      const { showUnlockScreen } = await import('./ui/views/unlock');
+      await showUnlockScreen(root, dataRoot);
     }
   }
 
@@ -108,84 +122,22 @@ async function boot(): Promise<void> {
     });
   }
 
-  /* --- Sincronización: arrancar el servidor/discovery en segundo plano --- */
+  /* --- Copias longlife: una por día, al iniciar y cada 24 h --- */
   if (isTauri()) {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      // Usar el nombre que el usuario eligió (si ya existe) para no pisarlo
-      // con el nombre del sistema al arrancar.
-      const currentName =
-        app.state.devices.get(deviceId)?.name?.trim() || deviceName();
-      await invoke('sync_start', { name: currentName });
-    } catch (err) {
-      console.warn('sync_start automático falló', err);
-    }
+    const { invoke } = await import('@tauri-apps/api/core');
+    const runLonglife = () => {
+      void invoke('longlife_run', { force: false }).catch((err) => {
+        console.warn('No se pudo crear la copia longlife:', err);
+      });
+    };
+    runLonglife();
+    window.setInterval(runLonglife, 24 * 60 * 60 * 1000);
   }
 
   /* --- Interfaz --- */
   const shell = createShell(root, app);
   registerRoutes(app, shell);
   shell.router.start();
-
-  /* --- Eventos del backend de sincronización --- */
-  if (isTauri()) {
-    const { listen } = await import('@tauri-apps/api/event');
-    await listen('sync-updated', () => {
-      void app
-        .rebuild()
-        .then(() => window.dispatchEvent(new CustomEvent('inventario:sync-updated')))
-        .catch((err) => console.error('No se pudo recargar tras sincronizar', err));
-    });
-    await listen('sync-discovery', (event) => {
-      window.dispatchEvent(
-        new CustomEvent('inventario:sync-discovery', { detail: event.payload }),
-      );
-      void import('./sync/autoSync').then((mod) => mod.onPeerDiscovered());
-    });
-    await listen('sync-peers-updated', (event) => {
-      window.dispatchEvent(
-        new CustomEvent('inventario:sync-peers-updated', { detail: event.payload }),
-      );
-    });
-    await listen('sync-pairing-completed', (event) => {
-      window.dispatchEvent(
-        new CustomEvent('inventario:sync-pairing-completed', { detail: event.payload }),
-      );
-    });
-    await listen('sync-pairing-request', (event) => {
-      const pending = event.payload as { name?: string } | null;
-      window.dispatchEvent(
-        new CustomEvent('inventario:sync-pairing-request', { detail: event.payload }),
-      );
-      toast(
-        `Solicitud de emparejamiento de ${pending?.name ?? 'un dispositivo'}. Abrí Ajustes › Sincronización para confirmar el código.`,
-        { kind: 'warning', duration: 8000 },
-      );
-    });
-
-    // Auto-sync
-    try {
-      const { loadConfig, refreshBattery, startAutoSync } = await import('./sync/autoSync');
-      (window as any).__storeRoot = (store as TauriEventStore).getRoot();
-      await loadConfig();
-      await refreshBattery();
-      startAutoSync();
-
-      // El servidor ya se inició una sola vez más arriba con `sync_start`.
-      // Llamarlo de nuevo aquí no aportaba nada y podía competir con la
-      // bandeja de emparejamiento durante el arranque.
-
-      // Auto-backup al abrir si no hay backup de hoy
-      const { invoke } = await import('@tauri-apps/api/core');
-      const root = (store as TauriEventStore).getRoot();
-      if (root) {
-        // backup automático respetando modo
-        invoke('backup_run_daily', { root, force: false }).catch(() => {});
-      }
-    } catch (e) {
-      console.warn('Auto-sync init falló', e);
-    }
-  }
 
   document.getElementById('boot')?.remove();
 }
@@ -260,9 +212,10 @@ function registerRoutes(app: App, shell: Shell): void {
   r.add('/reportes', show(() => reportsView(app, shell), 'Reportes'));
   r.add('/ajustes', show(() => settingsView(app, shell), 'Ajustes'));
   r.add('/importar', show(() => importCsvView(app, shell), 'Importar datos'));
-  r.add('/respaldos', () => {
+
+  const longlife = (): void => {
     const store = (app as any).store;
-    shell.setTitle('Respaldos diarios');
+    shell.setTitle('Copias longlife', 'Bóveda y snapshots diarios');
     if (store && typeof store.getRoot === 'function') {
       const elHost = el('div');
       mount(shell.outlet, elHost);
@@ -270,7 +223,9 @@ function registerRoutes(app: App, shell: Shell): void {
       return;
     }
     mount(shell.outlet, settingsView(app, shell));
-  });
+  };
+  r.add('/respaldos', longlife);
+  r.add('/longlife', longlife);
 
   r.notFound(() => {
     shell.setTitle('No encontrado');

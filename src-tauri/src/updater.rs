@@ -10,6 +10,7 @@ use tauri::AppHandle;
 
 const UPDATE_ENDPOINT: &str =
   "https://github.com/wulflo/store-inventory/releases/latest/download/latest.json";
+#[cfg(not(target_os = "android"))]
 const RELEASES_URL: &str = "https://github.com/wulflo/store-inventory/releases/latest";
 const UPDATE_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU3M0I4RDQ3N0IwODJEN0YKUldSL0xRaDdSNDA3NTZUZEhkMXJHL1JrV0l3czFIWkxHLzNPejJmaEpmY0Q1NWVmd2lxT1ZVd0YK";
 
@@ -29,8 +30,10 @@ pub struct UpdateCheck {
 struct ReleaseManifest {
   version: String,
   #[serde(default)]
+  #[allow(dead_code)]
   notes: Option<String>,
   #[serde(default)]
+  #[allow(dead_code)]
   pub_date: Option<String>,
   #[serde(default)]
   platforms: BTreeMap<String, ReleasePlatform>,
@@ -50,6 +53,7 @@ fn parse_version(text: &str) -> Option<semver::Version> {
   semver::Version::parse(text.trim().trim_start_matches('v')).ok()
 }
 
+#[cfg(any(target_os = "android", test))]
 fn is_newer(remote: &str, current: &str) -> bool {
   match (parse_version(remote), parse_version(current)) {
     (Some(remote), Some(current)) => remote > current,
@@ -125,12 +129,35 @@ fn update_user_agent() -> String {
   }
 }
 
-async fn fetch_manifest() -> Result<ReleaseManifest, String> {
-  let client = reqwest::Client::builder()
+/// Crea el cliente HTTP del actualizador.
+///
+/// En Android `reqwest` usa `rustls-platform-verifier`, que requiere una
+/// inicialización JNI que Tauri no hace por nosotros. En vez de depender del
+/// almacén de certificados del sistema usamos las raíces de Mozilla incluidas
+/// en el APK. Así la descarga funciona sin puentes JNI y sigue verificando la
+/// cadena TLS.
+fn http_client(timeout: std::time::Duration) -> Result<reqwest::Client, String> {
+  let builder = reqwest::Client::builder()
     .user_agent(update_user_agent())
-    .timeout(std::time::Duration::from_secs(30))
+    .timeout(timeout);
+
+  #[cfg(target_os = "android")]
+  let builder = {
+    let certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+      .iter()
+      .map(|cert| reqwest::Certificate::from_der(cert.as_ref()))
+      .collect::<Result<Vec<_>, _>>()
+      .map_err(|e| format!("No se pudieron cargar las raíces TLS: {e}"))?;
+    builder.tls_certs_only(certs)
+  };
+
+  builder
     .build()
-    .map_err(|e| format!("No se pudo crear el cliente HTTP: {e}"))?;
+    .map_err(|e| format!("No se pudo crear el cliente HTTP: {e}"))
+}
+
+async fn fetch_manifest() -> Result<ReleaseManifest, String> {
+  let client = http_client(std::time::Duration::from_secs(30))?;
   let response = client
     .get(UPDATE_ENDPOINT)
     .send()
@@ -156,11 +183,7 @@ async fn fetch_manifest() -> Result<ReleaseManifest, String> {
 }
 
 async fn download_release_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>, String> {
-  let client = reqwest::Client::builder()
-    .user_agent(update_user_agent())
-    .timeout(std::time::Duration::from_secs(timeout_secs))
-    .build()
-    .map_err(|e| format!("No se pudo crear el cliente HTTP: {e}"))?;
+  let client = http_client(std::time::Duration::from_secs(timeout_secs))?;
   let response = client
     .get(url)
     .send()
@@ -185,6 +208,9 @@ async fn download_release_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>,
 /* ----------------------------- Android ---------------------------- */
 
 #[cfg(target_os = "android")]
+use tauri_plugin_android_fs::{AndroidFs, AndroidFsExt, PublicGeneralPurposeDir, PublicStorage};
+
+#[cfg(target_os = "android")]
 async fn android_check() -> Result<UpdateCheck, String> {
   let manifest = fetch_manifest().await?;
   let platform = pick_platform(&manifest.platforms);
@@ -201,7 +227,7 @@ async fn android_check() -> Result<UpdateCheck, String> {
 }
 
 #[cfg(target_os = "android")]
-async fn android_install() -> Result<String, String> {
+async fn android_install(app: &AppHandle) -> Result<String, String> {
   let manifest = fetch_manifest().await?;
   if !is_newer(&manifest.version, &current_version()) {
     return Err("Ya tenés la última versión.".into());
@@ -221,16 +247,26 @@ async fn android_install() -> Result<String, String> {
   verify_release_signature(&bytes, &platform.signature)?;
 
   let file_name = format!("Inventario-Tienda-v{}.apk", manifest.version);
-  let saved = crate::android_fs::save_to_downloads(
-    &file_name,
-    "application/vnd.android.package-archive",
-    &bytes,
-  )?;
-  // Intentar lanzar el instalador automáticamente (FileProvider/MediaStore).
-  let _ = crate::android_fs::install_apk(&file_name);
+  let relative = format!("InventarioTienda/{file_name}");
+  let mut source = std::io::Cursor::new(&bytes);
+  let saved = app
+    .android_fs()
+    .public_storage()
+    .write_with_contents_writer(
+      PublicGeneralPurposeDir::Download,
+      &relative,
+      Some("application/vnd.android.package-archive"),
+      |destination| std::io::copy(&mut source, destination).map(|_| ()),
+    )
+    .map_err(|e| format!("No se pudo guardar el APK en Descargas: {e}"))?;
+
+  let actual_name = app
+    .android_fs()
+    .get_file_name(&saved)
+    .unwrap_or(file_name);
   Ok(format!(
-    "APK {} guardado en Descargas. Ruta: {saved}. Si no se abrió el instalador, abrilo manualmente para actualizar.",
-    manifest.version
+    "APK {} guardado en Descargas/InventarioTienda/{}. Abrilo desde el gestor de archivos para instalar la actualización.",
+    manifest.version, actual_name
   ))
 }
 
@@ -412,8 +448,7 @@ pub async fn cmd_updater_check(app: AppHandle) -> Result<UpdateCheck, String> {
 pub async fn cmd_updater_install(app: AppHandle) -> Result<String, String> {
   #[cfg(target_os = "android")]
   {
-    let _ = app;
-    match tokio::time::timeout(std::time::Duration::from_secs(300), android_install()).await {
+    match tokio::time::timeout(std::time::Duration::from_secs(300), android_install(&app)).await {
       Ok(res) => res,
       Err(_) => Err("Tiempo agotado al descargar la actualización.".into()),
     }

@@ -95,18 +95,18 @@ function downloadText(filename: string, contents: string): void {
 }
 
 /**
- * Refresca el respaldo diario después de un cambio de clave.
+ * Refresca la copia longlife del día después de un cambio de clave.
  *
- * Así la bóveda no conserva el snapshot en texto plano del día (o con la
- * clave vieja) cuando el equipo ya está cifrado. Si falla, no se oculta: el
- * cifrado ya está activo y solo se avisa que el respaldo quedó viejo.
+ * Así la bóveda no conserva el snapshot de hoy con la clave vieja. Si falla,
+ * no se oculta: el cifrado ya está activo y solo se avisa que la copia quedó
+ * desactualizada.
  */
-async function refreshDailyBackup(root: string): Promise<void> {
+async function refreshDailyBackup(): Promise<void> {
   try {
-    await invokeCmd('backup_run_daily', { root, force: true });
+    await invokeCmd('longlife_run', { force: true });
   } catch (err) {
     toast(
-      `El cifrado quedó activo, pero no se pudo actualizar el respaldo diario: ${
+      `El cifrado quedó activo, pero no se pudo actualizar la copia longlife del día: ${
         err instanceof Error ? err.message : String(err)
       }`,
       { kind: 'error', duration: 10000 },
@@ -115,8 +115,9 @@ async function refreshDailyBackup(root: string): Promise<void> {
 }
 
 /** Muestra el código de recuperación una única vez, con copiar y descargar. */
-function showRecoveryCodeModal(code: string, note?: string): void {
-  const copyBtn = el('button', {
+export function showRecoveryCodeModal(code: string, note?: string): Promise<void> {
+  return new Promise((resolve) => {
+    const copyBtn = el('button', {
     class: 'btn',
     type: 'button',
     text: 'Copiar',
@@ -200,6 +201,8 @@ function showRecoveryCodeModal(code: string, note?: string): void {
         on: { click: () => modal.close() },
       }),
     ],
+    onClose: () => resolve(),
+  });
   });
 }
 
@@ -341,7 +344,7 @@ export function settingsCryptoCard(app: any): HTMLElement {
           { kind: 'success', duration: result.events > 0 ? 8000 : undefined },
         );
         await refresh();
-        void refreshDailyBackup(root);
+        void refreshDailyBackup();
       } catch (err) {
         showError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -374,7 +377,7 @@ export function settingsCryptoCard(app: any): HTMLElement {
 
     const modal = openModal({
       title: 'Adoptar llavero de otro equipo',
-      subtitle: 'Para volver a sincronizar después de una rotación.',
+      subtitle: 'Para volver a abrir los datos en otro equipo después de una rotación.',
       wide: true,
       body: [
         el('p', { class: 'muted' }, [
@@ -441,7 +444,7 @@ export function settingsCryptoCard(app: any): HTMLElement {
           { kind: 'success', duration: 8000 },
         );
         await refresh();
-        void refreshDailyBackup(root);
+        void refreshDailyBackup();
       } catch (err) {
         showError(err instanceof Error ? err.message : String(err));
         await refresh().catch(() => undefined);
@@ -494,10 +497,10 @@ export function settingsCryptoCard(app: any): HTMLElement {
         repeat.input.value = '';
         showRecoveryCodeModal(
           result.recovery_code,
-          `Se cifraron ${result.events} eventos en ${result.files} archivos. Respaldo previo: ${result.backup_dir}`,
+          `Se cifraron ${result.events} eventos en ${result.files} archivos. Respaldo previo dentro de omega/: ${result.backup_dir}`,
         );
         await refresh();
-        void refreshDailyBackup(root);
+        void refreshDailyBackup();
       } catch (err) {
         toast(err instanceof Error ? err.message : String(err), { kind: 'error' });
         await refresh().catch(() => undefined);
@@ -514,11 +517,11 @@ export function settingsCryptoCard(app: any): HTMLElement {
           class: 'muted',
           style: { marginBottom: '12px' },
           text:
-            'Los payloads se cifran con XChaCha20-Poly1305. Los metadatos (id, tipo, fecha, equipo) quedan en claro para poder ordenar, deduplicar y sincronizar.',
+            'Los payloads se cifran con XChaCha20-Poly1305. Los metadatos (id, tipo, fecha, equipo) quedan en claro para poder ordenar y deduplicar.',
         }),
         warnBox(
           el('strong', { text: 'Antes de activar: ' }),
-          'guardá el código de recuperación que se muestra al final. Sin la contraseña ni el código, los datos no se pueden abrir. Los respaldos diarios anteriores a la activación siguen en texto plano.',
+          'guardá el código de recuperación que se muestra al final. Sin la contraseña ni el código, los datos no se pueden abrir. Las copias longlife anteriores a la activación pueden seguir conteniendo texto plano.',
         ),
         password.wrap,
         repeat.wrap,
@@ -528,7 +531,7 @@ export function settingsCryptoCard(app: any): HTMLElement {
           class: 'muted',
           style: { marginBottom: '8px' },
           text:
-            '¿Ya usás el cifrado en otro equipo? Importá su llavero para compartir la misma clave. Si en cambio activás acá, se crea una clave nueva y el sync con el otro equipo fallará hasta que importes el llavero del otro lado.',
+            '¿Ya usás el cifrado en otro equipo? Importá su llavero para compartir la misma clave. Si en cambio activás acá, se crea una clave nueva y los datos del otro equipo no se podrán abrir con esta contraseña hasta que importes el llavero del otro lado.',
         }),
         el('button', {
           class: 'btn btn-ghost',
@@ -704,10 +707,10 @@ export function settingsCryptoCard(app: any): HTMLElement {
         modal.close();
         showRecoveryCodeModal(
           result.recovery_code,
-          `Se re-cifraron ${result.events} eventos en ${result.files} archivos. Respaldo previo: ${result.backup_dir}`,
+          `Se re-cifraron ${result.events} eventos en ${result.files} archivos. Respaldo previo dentro de omega/: ${result.backup_dir}`,
         );
         await refresh();
-        void refreshDailyBackup(root);
+        void refreshDailyBackup();
       } catch (err) {
         showError(err instanceof Error ? err.message : String(err));
         await refresh().catch(() => undefined);
@@ -851,7 +854,7 @@ export function settingsCryptoCard(app: any): HTMLElement {
           class: 'muted',
           style: { marginBottom: '12px' },
           text:
-            'El payload de cada evento se cifra en disco y se descifra al leerlo. El sync transporta el ciphertext por el túnel mTLS.',
+            'El payload de cada evento se cifra en disco y se descifra al leerlo con la clave de la bóveda. El mismo llavero permite abrir los datos en otro equipo usando la misma contraseña.',
         }),
         el(
           'div',

@@ -20,11 +20,11 @@ use chacha20poly1305::{
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::storage;
 
 pub const KEYRING_VERSION: u32 = 1;
 pub const MIN_PASSWORD_LEN: usize = 8;
@@ -128,24 +128,26 @@ pub struct CreatedKeyring {
 /* Rutas y persistencia                                               */
 /* ------------------------------------------------------------------ */
 
-pub fn keys_dir(root: &str) -> PathBuf {
-  Path::new(root).join("keys")
+pub const KEYRING_REL: &str = "keys/keyring.json";
+pub const STAGED_KEYRING_REL: &str = "keys/keyring.next.json";
+
+#[cfg(test)]
+pub fn keyring_path(root: &str) -> PathBuf {
+  Path::new(root).join(KEYRING_REL)
 }
 
-pub fn keyring_path(root: &str) -> PathBuf {
-  keys_dir(root).join("keyring.json")
+pub fn staged_path(root: &str) -> PathBuf {
+  Path::new(root).join(STAGED_KEYRING_REL)
 }
 
 pub fn exists(root: &str) -> bool {
-  keyring_path(root).exists()
+  storage::exists(root, KEYRING_REL).unwrap_or(false)
 }
 
 pub fn load(root: &str) -> Result<Option<Keyring>, String> {
-  let path = keyring_path(root);
-  let text = match fs::read_to_string(&path) {
-    Ok(text) => text,
-    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-    Err(e) => return Err(format!("No se pudo leer el llavero de cifrado: {e}")),
+  let text = match storage::read_string(root, KEYRING_REL)? {
+    Some(text) => text,
+    None => return Ok(None),
   };
   parse(&text).map(Some)
 }
@@ -191,52 +193,16 @@ pub fn parse(text: &str) -> Result<Keyring, String> {
   Ok(keyring)
 }
 
-/// Escritura atómica (`tmp` + fsync + rename) con permisos 0600.
-fn write_keyring_file(path: &Path, keyring: &Keyring) -> Result<(), String> {
-  let tmp = path.with_extension("json.tmp");
-  let json = serde_json::to_string_pretty(keyring)
-    .map_err(|e| format!("No se pudo serializar el llavero: {e}"))?;
-
-  {
-    let mut file = fs::File::create(&tmp)
-      .map_err(|e| format!("No se pudo escribir el llavero temporal: {e}"))?;
-    file
-      .write_all(json.as_bytes())
-      .map_err(|e| format!("No se pudo escribir el llavero: {e}"))?;
-    file
-      .sync_all()
-      .map_err(|e| format!("No se pudo sincronizar el llavero: {e}"))?;
-  }
-
-  #[cfg(unix)]
-  {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
-  }
-
-  fs::rename(&tmp, path).map_err(|e| format!("No se pudo guardar el llavero: {e}"))?;
-  Ok(())
-}
-
 /// Guarda el llavero activo. Se usa al crear (activar) el cifrado.
 pub fn save(root: &str, keyring: &Keyring) -> Result<(), String> {
-  let dir = keys_dir(root);
-  fs::create_dir_all(&dir).map_err(|e| format!("No se pudo crear la carpeta de claves: {e}"))?;
-  write_keyring_file(&keyring_path(root), keyring)
+  let json = serde_json::to_string_pretty(keyring)
+    .map_err(|e| format!("No se pudo serializar el llavero: {e}"))?;
+  storage::write_atomic(root, KEYRING_REL, json.as_bytes())
 }
 
 /// Elimina el llavero activo (solo para revertir una activación fallida).
 pub fn remove(root: &str) -> Result<(), String> {
-  match fs::remove_file(keyring_path(root)) {
-    Ok(()) => Ok(()),
-    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-    Err(e) => Err(format!("No se pudo quitar el llavero: {e}")),
-  }
-}
-
-/// Ruta del llavero preparado pero todavía no activo.
-pub fn staged_path(root: &str) -> PathBuf {
-  keys_dir(root).join("keyring.next.json")
+  storage::remove_file(root, KEYRING_REL)
 }
 
 /// Escribe el llavero nuevo **antes** de migrar los eventos.
@@ -245,22 +211,20 @@ pub fn staged_path(root: &str) -> PathBuf {
 /// siendo el viejo y los datos siguen siendo legibles. La activación es un
 /// `rename` posterior (`commit_staged`), que no necesita espacio adicional.
 pub fn stage(root: &str, keyring: &Keyring) -> Result<(), String> {
-  let dir = keys_dir(root);
-  fs::create_dir_all(&dir).map_err(|e| format!("No se pudo crear la carpeta de claves: {e}"))?;
-  write_keyring_file(&staged_path(root), keyring)
+  let json = serde_json::to_string_pretty(keyring)
+    .map_err(|e| format!("No se pudo serializar el llavero: {e}"))?;
+  storage::write_atomic(root, STAGED_KEYRING_REL, json.as_bytes())
 }
 
-/// Activa el llavero preparado con `stage` (rename atómico).
+/// Activa el llavero preparado con `stage` (rename atómico en local).
 pub fn commit_staged(root: &str) -> Result<(), String> {
-  let from = staged_path(root);
-  let to = keyring_path(root);
-  fs::rename(&from, &to)
+  storage::rename(root, STAGED_KEYRING_REL, KEYRING_REL)
     .map_err(|e| format!("No se pudo activar el llavero nuevo: {e}"))
 }
 
 /// Descarta un llavero preparado que no llegó a usarse.
 pub fn discard_staged(root: &str) {
-  let _ = fs::remove_file(staged_path(root));
+  let _ = storage::remove_file(root, STAGED_KEYRING_REL);
 }
 
 /* ------------------------------------------------------------------ */
@@ -608,6 +572,7 @@ fn wipe(bytes: &mut [u8]) {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::fs;
 
   fn temp_root(tag: &str) -> String {
     let nanos = SystemTime::now()

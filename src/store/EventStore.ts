@@ -29,7 +29,7 @@ export interface EventStore {
   /** Lee todos los dominios. */
   readAll(): Promise<DomainEvent[]>;
 
-  /** Notifica cuando cambia el contenido de un dominio (para sync externo). */
+  /** Notifica cuando cambia el contenido de un dominio (para refrescar vistas). */
   watch(callback: (domain: Domain) => void): Promise<void>;
 
   /** Deja de observar. */

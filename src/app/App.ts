@@ -48,7 +48,7 @@ export class App {
     this.projector.applyAll(events);
     this.clock.resetTo(this.state.lastHlc);
 
-    // Observar cambios externos (Syncthing/Drive sincronizan la carpeta).
+    // Observar cambios externos (otra app o equipo escribe en la carpeta).
     await this.store.watch((domain) => {
       void this.reloadDomain(domain);
     });
@@ -62,10 +62,10 @@ export class App {
       const events = await this.store.read(domain);
       const projector = new Projector(this.state);
       for (const ev of events) projector.apply(ev);
-      this.notify({ type: 'state', reason: `sync:${domain}` });
+      this.notify({ type: 'state', reason: `external:${domain}` });
     } catch (err) {
       console.error('reloadDomain', err);
-      this.notify({ type: 'error', message: 'No se pudo actualizar desde la carpeta sincronizada.' });
+      this.notify({ type: 'error', message: 'No se pudo actualizar desde la carpeta de datos.' });
     } finally {
       this.refreshing = false;
     }
