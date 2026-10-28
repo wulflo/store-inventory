@@ -55,8 +55,9 @@ function vaultLabel(status: VaultStatus | null): string {
 /**
  * Vista de la bóveda y sus copias diarias "longlife".
  *
- * La app nunca lee `longlife` automáticamente. Restaurar es una operación
- * manual: el usuario copia una fecha dentro de `omega` con la app cerrada.
+ * La copia del día se refresca automáticamente después de los cambios, pero la
+ * app nunca lee `longlife`. Restaurar es una operación manual: el usuario copia
+ * una fecha dentro de `omega` con la app cerrada.
  */
 export function settingsBackupView(host: HTMLElement, _store?: TauriEventStore): void {
   const statusHost = el('div', { class: 'stack' }, el('p', { class: 'muted' }, 'Cargando…'));
@@ -92,17 +93,17 @@ export function settingsBackupView(host: HTMLElement, _store?: TauriEventStore):
   const runToday = el('button', {
     class: 'btn btn-primary',
     type: 'button',
-    text: 'Crear copia de hoy',
+    text: 'Actualizar copia de hoy',
     on: {
       click: async () => {
         if (!isTauri()) return;
         try {
           const { invoke } = await import('@tauri-apps/api/core');
-          const result = await invoke<LonglifeResult>('longlife_run', { force: false });
+          const result = await invoke<LonglifeResult>('longlife_run', { refresh: true });
           toast(
             result.reused
-              ? `La copia de ${result.date} ya existía (${result.files} archivos).`
-              : `Copia de ${result.date} creada: ${result.files} archivos, ${bytesLabel(result.totalBytes)}.`,
+              ? `La copia de ${result.date} ya estaba al día (${result.files} archivos).`
+              : `Copia de ${result.date} actualizada: ${result.files} archivos, ${bytesLabel(result.totalBytes)}.`,
             { kind: 'success' },
           );
           await refresh();
@@ -116,14 +117,14 @@ export function settingsBackupView(host: HTMLElement, _store?: TauriEventStore):
   const forceToday = el('button', {
     class: 'btn btn-ghost',
     type: 'button',
-    text: 'Regenerar copia de hoy',
+    text: 'Regenerar desde cero',
     on: {
       click: async () => {
         if (!isTauri()) return;
         const ok = await confirmDialog({
           title: 'Regenerar la copia de hoy',
           message:
-            'Se reemplaza el snapshot de hoy con el estado actual de omega/. Las copias de días anteriores no se tocan.',
+            'Se borra y se vuelve a crear el snapshot de hoy con el estado actual de omega/. Las copias de días anteriores no se tocan.',
           confirmLabel: 'Regenerar',
         });
         if (!ok) return;
@@ -186,7 +187,7 @@ export function settingsBackupView(host: HTMLElement, _store?: TauriEventStore):
           el('p', {
             class: 'muted',
             text:
-              'Cada día se guarda una copia de <bóveda>/omega en <bóveda>/longlife/YYYY-MM-DD. Se conservan las 7 fechas más recientes. La app no lee estas copias automáticamente.',
+              'Cada día se guarda una copia de <bóveda>/omega en <bóveda>/longlife/YYYY-MM-DD. La copia del día se actualiza sola unos minutos después de un cambio, al pasar a segundo plano o al cerrar. Se conservan las 7 fechas más recientes y la app no lee estas copias automáticamente.',
           }),
         ]),
       ]),
@@ -211,7 +212,7 @@ export function settingsBackupView(host: HTMLElement, _store?: TauriEventStore):
         el('div', { class: 'card-header' }, [
           el('div', {}, [
             el('h2', {}, 'Estado de las copias'),
-            el('p', { class: 'muted' }, 'Snapshot automático diario'),
+            el('p', { class: 'muted' }, 'Snapshot automático diario y después de cambios'),
           ]),
         ]),
         el('div', { class: 'card-body stack' }, [
@@ -296,7 +297,7 @@ export function settingsBackupView(host: HTMLElement, _store?: TauriEventStore):
           el('span', { class: 'small strong' }, status.lastDate ?? 'Todavía ninguna'),
         ]),
         el('div', { class: 'row-between' }, [
-          el('span', { class: 'small muted' }, 'Creada'),
+          el('span', { class: 'small muted' }, 'Actualizada'),
           el('span', { class: 'small' }, status.lastCreatedAt ? formatDateTime(Date.parse(status.lastCreatedAt)) : '-'),
         ]),
         el('div', { class: 'row-between' }, [
@@ -306,14 +307,14 @@ export function settingsBackupView(host: HTMLElement, _store?: TauriEventStore):
         el('p', {
           class: 'small muted mt-2',
           text: status.hasVault
-            ? 'Se guarda una copia por día. Al llegar a 7, se elimina la fecha más vieja.'
+            ? 'Se guarda una copia por día y se refresca tras los cambios. Al llegar a 7, se elimina la fecha más vieja.'
             : 'Elegí una carpeta bóveda para activar las copias.',
         }),
       );
 
       if (entries.length === 0) {
         listHost.replaceChildren(
-          el('p', { class: 'muted' }, 'Todavía no hay copias longlife. Se crea una al iniciar la app cada día.'),
+          el('p', { class: 'muted' }, 'Todavía no hay copias longlife. Se crea una al iniciar la app y se actualiza después de los cambios.'),
         );
       } else {
         listHost.replaceChildren(

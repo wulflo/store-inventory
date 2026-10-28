@@ -1,8 +1,8 @@
 # Refactor: bóveda elegida por el usuario + longlife + cifrado obligatorio
 
-> **Estado:** implementado, verificado en emulador Android y preparado para el
-> release v0.2.11. Este documento es la fuente de verdad para retomar el trabajo
-> si se corta la conexión, la sesión o el build.
+> **Estado:** implementado y verificado en emulador Android; pendiente de
+> publicar el release v0.2.12. Este documento es la fuente de verdad para
+> retomar el trabajo si se corta la conexión, la sesión o el build.
 >
 > Última actualización: 2026-10-28
 
@@ -11,7 +11,8 @@
 1. Eliminar por completo la sincronización LAN/P2P/WiFi.
 2. En Android (y escritorio), el usuario elige una **carpeta bóveda**.
 3. Los datos de la app viven en `<bóveda>/omega` y la app lee/escribe ahí.
-4. Cada 24 h se guarda una copia idéntica en `<bóveda>/longlife/YYYY-MM-DD/`.
+4. Se guarda una copia en `<bóveda>/longlife/YYYY-MM-DD/`; la del día se
+   refresca tras los cambios, al pasar a segundo plano, al cerrar y cada 24 h.
 5. Se conservan solo **7 copias** diarias (rotación automática).
 6. La app **no lee** `longlife` automáticamente. Solo si el usuario mueve una
    copia a `omega` a mano.
@@ -134,14 +135,18 @@
 
 - [x] Reescribir `backup.rs` como longlife:
   - [x] `longlife_status`.
-  - [x] `longlife_run` (idempotente por día, `force` opcional).
+  - [x] `longlife_run` (idempotente por día, `force` y `refresh` opcionales).
   - [x] `longlife_list`.
   - [x] `longlife_delete` (borra todo `longlife/`).
 - [x] Copiar `omega` completo a `longlife/YYYY-MM-DD/` (excluir `backups/` y
       temporales).
 - [x] `manifest.json` con fecha, archivos, bytes y sha256.
 - [x] Retención: conservar las 7 fechas más recientes.
-- [x] Disparo al arrancar + intervalo de 24 h (idempotente: 1 snapshot/día).
+- [x] Disparo al arrancar + intervalo de 24 h.
+- [x] Refresco de la copia del día con debounce de 3 minutos tras cambios
+      locales, al pasar a segundo plano y al cerrar.
+- [x] El refresco compara hashes y solo reescribe archivos modificados; no
+      borra el snapshot antes de copiar.
 - [x] NO leer longlife automáticamente. Eliminar `backup_pull_from_vault`.
 
 ### Etapa 7 — Cifrado obligatorio al arrancar (HECHA)
@@ -185,7 +190,7 @@
 
 - [x] `npm run typecheck`.
 - [x] `npm test` (53 tests).
-- [x] `cargo test --manifest-path src-tauri/Cargo.toml` (54 pass, 1 ignored).
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml` (55 pass, 1 ignored).
 - [x] `grep -R "sync" src src-tauri/src` sin resultados funcionales.
 - [x] Build escritorio (`npx tauri build --no-bundle` o `cargo check`).
 - [x] Build Android debug (SDK/NDK local; `JAVA_HOME=/tmp/opencode/jdk`).
@@ -193,6 +198,10 @@
       desbloquear con contraseña y con código de recuperación.
 - [x] Crear/regenerar longlife, verificar nombres canónicos y ausencia de
       marcadores `.keep-*`; borrar longlife con doble confirmación.
+- [x] Verificar el refresco automático en emulador: cambio de ajuste sin
+      actualización inmediata, actualización a los 3 minutos, flush al pasar a
+      segundo plano, restauración de un archivo faltante y limpieza de un
+      archivo obsoleto dentro del snapshot.
 - [x] Buscar actualizaciones y descargar el APK a Descargas.
 
 ## 4. Comandos útiles

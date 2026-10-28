@@ -1,8 +1,10 @@
 //! Copias "longlife".
 //!
-//! Cada 24 horas se guarda una copia idéntica de `<bóveda>/omega` en
-//! `<bóveda>/longlife/YYYY-MM-DD/`. Se conservan las **7 fechas más
-//! recientes**. La app **nunca** lee `longlife` automáticamente: es un
+//! Se guarda una copia de `<bóveda>/omega` en
+//! `<bóveda>/longlife/YYYY-MM-DD/`. La copia del día se crea al arrancar y se
+//! refresca pocos minutos después de cada cambio local; además se actualiza al
+//! pasar a segundo plano, al cerrar y cada 24 h. Se conservan las **7 fechas
+//! más recientes**. La app **nunca** lee `longlife` automáticamente: es un
 //! snapshot para que el usuario lo restaure a mano si lo necesita.
 //!
 //! El snapshot incluye el llavero (`keys/keyring.json`), que está envuelto con
@@ -11,6 +13,8 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Mutex;
 use tauri::AppHandle;
 
 use crate::{storage, vault};
@@ -18,6 +22,11 @@ use crate::{storage, vault};
 pub const MAX_SNAPSHOTS: usize = 7;
 const LONGLIFE_DIR: &str = "longlife";
 const MANIFEST_FILE: &str = "manifest.json";
+
+/// Serializa la creación, el refresco y el borrado de snapshots. Sin esto, una
+/// actualización automática y una acción manual podrían mezclar archivos y
+/// manifiestos del mismo día.
+static SNAPSHOT_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,7 +76,7 @@ pub struct LonglifeResult {
   pub path: String,
   pub files: usize,
   pub total_bytes: u64,
-  /// `true` si ya existía la copia del día y no se regeneró.
+  /// `true` si la copia del día ya estaba al día (sin cambios).
   pub reused: bool,
 }
 
@@ -83,6 +92,44 @@ fn sha256(bytes: &[u8]) -> String {
   let mut hasher = Sha256::new();
   hasher.update(bytes);
   format!("{:x}", hasher.finalize())
+}
+
+/// `true` si el archivo de `omega` debe viajar dentro del snapshot.
+fn is_snapshot_file(relative: &str) -> bool {
+  let file_name = relative.rsplit('/').next().unwrap_or(relative);
+  !(relative.starts_with("backups/")
+    || relative == MANIFEST_FILE
+    || file_name.starts_with(".keep-"))
+}
+
+fn source_snapshot_files(data_root: &str) -> Result<Vec<String>, String> {
+  Ok(
+    storage::list_files_recursive(data_root, "")?
+      .into_iter()
+      .filter(|relative| is_snapshot_file(relative))
+      .collect(),
+  )
+}
+
+fn build_manifest(
+  date: &str,
+  mut files: Vec<LonglifeFile>,
+  total_bytes: u64,
+) -> LonglifeManifest {
+  files.sort_by(|a, b| a.name.cmp(&b.name));
+  let mut total_hasher = Sha256::new();
+  for file in &files {
+    total_hasher.update(file.sha256.as_bytes());
+  }
+  LonglifeManifest {
+    version: 1,
+    date: date.to_string(),
+    created_at: now_iso(),
+    data_root: "omega".to_string(),
+    files,
+    total_bytes,
+    sha256_total: format!("{:x}", total_hasher.finalize()),
+  }
 }
 
 fn is_date_dir(name: &str) -> bool {
@@ -194,22 +241,34 @@ pub fn longlife_list(app: AppHandle) -> Result<Vec<LonglifeEntry>, String> {
 /// Copia `<vault>/omega` a `<vault>/longlife/YYYY-MM-DD/`.
 ///
 /// Es idempotente por día: si ya existe `manifest.json` y `force` es falso,
-/// devuelve la copia existente. Tras copiar, elimina las fechas sobrantes.
+/// devuelve la copia existente. Con `refresh: true` actualiza la copia del día
+/// sin borrarla primero, comparando hashes para escribir solo lo que cambió.
+/// Tras copiar, elimina las fechas sobrantes.
 #[tauri::command]
-pub fn longlife_run(app: AppHandle, force: Option<bool>) -> Result<LonglifeResult, String> {
+pub fn longlife_run(
+  app: AppHandle,
+  force: Option<bool>,
+  refresh: Option<bool>,
+) -> Result<LonglifeResult, String> {
   let force = force.unwrap_or(false);
+  let refresh = refresh.unwrap_or(false);
   let Some(config) = vault::load_config(&app)? else {
     return Err(format!(
       "{} Elegí una carpeta bóveda para empezar.",
       vault::VAULT_NOT_CONFIGURED
     ));
   };
-  run_snapshot(
-    &config.data_root,
-    &config.vault_root,
-    &today_str(),
-    force,
-  )
+  let _guard = SNAPSHOT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+  if refresh {
+    run_snapshot_refresh(&config.data_root, &config.vault_root, &today_str())
+  } else {
+    run_snapshot(
+      &config.data_root,
+      &config.vault_root,
+      &today_str(),
+      force,
+    )
+  }
 }
 
 /// Núcleo del snapshot, separado del `AppHandle` para poder probarlo.
@@ -238,9 +297,10 @@ fn run_snapshot(
     storage::remove_dir_all(vault_root, &day_dir)?;
   }
 
+  storage::create_dir_all(vault_root, &day_dir)?;
+
   // Copia completa de omega, salvo los respaldos previos a una migración
   // (pueden ser grandes y no forman parte del estado vivo).
-  let files = storage::list_files_recursive(data_root, "")?;
   let mut manifest_files: Vec<LonglifeFile> = Vec::new();
   let mut total_bytes = 0u64;
 
@@ -249,14 +309,7 @@ fn run_snapshot(
       .lock()
       .unwrap_or_else(|e| e.into_inner());
 
-    for relative in files {
-      let file_name = relative.rsplit('/').next().unwrap_or(relative.as_str());
-      if relative.starts_with("backups/")
-        || relative == MANIFEST_FILE
-        || file_name.starts_with(".keep-")
-      {
-        continue;
-      }
+    for relative in source_snapshot_files(data_root)? {
       let Some(bytes) = storage::read_bytes(data_root, &relative)? else {
         continue;
       };
@@ -271,20 +324,130 @@ fn run_snapshot(
     }
   }
 
-  manifest_files.sort_by(|a, b| a.name.cmp(&b.name));
-  let mut total_hasher = Sha256::new();
-  for file in &manifest_files {
-    total_hasher.update(file.sha256.as_bytes());
-  }
-  let manifest = LonglifeManifest {
-    version: 1,
+  let manifest = build_manifest(date, manifest_files, total_bytes);
+  let json = serde_json::to_string_pretty(&manifest)
+    .map_err(|e| format!("No se pudo serializar el manifiesto: {e}"))?;
+  storage::write_atomic(
+    vault_root,
+    &format!("{day_dir}/{MANIFEST_FILE}"),
+    json.as_bytes(),
+  )?;
+
+  prune_old(vault_root)?;
+
+  Ok(LonglifeResult {
     date: date.to_string(),
-    created_at: now_iso(),
-    data_root: "omega".to_string(),
-    files: manifest_files,
-    total_bytes,
-    sha256_total: format!("{:x}", total_hasher.finalize()),
-  };
+    path: day_dir,
+    files: manifest.files.len(),
+    total_bytes: manifest.total_bytes,
+    reused: false,
+  })
+}
+
+/// Actualiza la copia de hoy sin borrarla antes.
+///
+/// Compara el hash de cada archivo de `omega` con el manifiesto existente y
+/// solo reescribe los que cambiaron. También elimina del snapshot los archivos
+/// que ya no existen en `omega`. Si no hay cambios, devuelve `reused: true`.
+fn run_snapshot_refresh(
+  data_root: &str,
+  vault_root: &str,
+  date: &str,
+) -> Result<LonglifeResult, String> {
+  let day_dir = format!("{LONGLIFE_DIR}/{date}");
+
+  // En SAF `list_dir` falla si la carpeta no existe; crearla es idempotente.
+  storage::create_dir_all(vault_root, LONGLIFE_DIR)?;
+
+  let existing = read_manifest(vault_root, date);
+  let existing_hashes: BTreeMap<String, (u64, String)> = existing
+    .as_ref()
+    .map(|manifest| {
+      manifest
+        .files
+        .iter()
+        .map(|file| (file.name.clone(), (file.bytes, file.sha256.clone())))
+        .collect()
+    })
+    .unwrap_or_default();
+
+  let mut manifest_files: Vec<LonglifeFile> = Vec::new();
+  let mut current_files: BTreeSet<String> = BTreeSet::new();
+  let mut total_bytes = 0u64;
+  let mut changed = existing.is_none();
+
+  {
+    let _guard = crate::event_store::EVENTS_WRITE_LOCK
+      .lock()
+      .unwrap_or_else(|e| e.into_inner());
+
+    storage::create_dir_all(vault_root, &day_dir)?;
+
+    // Un solo listado del snapshot alcanza para saber qué archivos existen y
+    // cuáles sobran; en SAF esto evita un escaneo por cada archivo.
+    let mut stored_files: BTreeMap<String, String> = BTreeMap::new();
+    if existing.is_some() {
+      let prefix = format!("{day_dir}/");
+      for stored in storage::list_files_recursive(vault_root, &day_dir)? {
+        if let Some(name) = stored.strip_prefix(&prefix) {
+          stored_files.insert(name.to_string(), stored);
+        }
+      }
+    }
+
+    for relative in source_snapshot_files(data_root)? {
+      let Some(bytes) = storage::read_bytes(data_root, &relative)? else {
+        continue;
+      };
+      let hash = sha256(&bytes);
+      let bytes_len = bytes.len() as u64;
+      let destination = format!("{day_dir}/{relative}");
+      let unchanged = existing_hashes
+        .get(&relative)
+        .map(|(old_bytes, old_hash)| *old_bytes == bytes_len && old_hash == &hash)
+        .unwrap_or(false)
+        // Si alguien borró un archivo del snapshot, el manifiesto puede seguir
+        // diciendo que estaba al día; en ese caso hay que volver a copiarlo.
+        && stored_files.contains_key(&relative);
+
+      if !unchanged {
+        storage::write_bytes(vault_root, &destination, &bytes)?;
+        changed = true;
+      }
+
+      current_files.insert(relative.clone());
+      total_bytes += bytes_len;
+      manifest_files.push(LonglifeFile {
+        name: relative,
+        bytes: bytes_len,
+        sha256: hash,
+      });
+    }
+
+    // Si el snapshot anterior tenía archivos que ya no están en omega, se
+    // quitan para que la copia siga siendo idéntica al estado vivo.
+    for (name, stored) in stored_files {
+      if name == MANIFEST_FILE || current_files.contains(&name) {
+        continue;
+      }
+      storage::remove_file(vault_root, &stored)?;
+      changed = true;
+    }
+  }
+
+  if !changed {
+    if let Some(existing) = existing {
+      return Ok(LonglifeResult {
+        date: date.to_string(),
+        path: day_dir,
+        files: existing.files.len(),
+        total_bytes: existing.total_bytes,
+        reused: true,
+      });
+    }
+  }
+
+  let manifest = build_manifest(date, manifest_files, total_bytes);
   let json = serde_json::to_string_pretty(&manifest)
     .map_err(|e| format!("No se pudo serializar el manifiesto: {e}"))?;
   storage::write_atomic(
@@ -319,6 +482,7 @@ pub fn longlife_delete(app: AppHandle) -> Result<(), String> {
   let Some(config) = vault::load_config(&app)? else {
     return Ok(());
   };
+  let _guard = SNAPSHOT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   storage::remove_dir_all(&config.vault_root, LONGLIFE_DIR)?;
   storage::create_dir_all(&config.vault_root, LONGLIFE_DIR)
 }
@@ -429,6 +593,74 @@ mod tests {
     assert!(reused.reused);
     let forced = run_snapshot(&omega_s, &vault_s, "2026-10-08", true).unwrap();
     assert!(!forced.reused);
+
+    let _ = std::fs::remove_dir_all(&base);
+  }
+
+  #[test]
+  fn refresh_updates_today_and_removes_stale_files() {
+    let base = temp_dir("refresh");
+    let omega = base.join("omega");
+    let vault = base.join("vault");
+    let omega_s = omega.to_string_lossy().to_string();
+    let vault_s = vault.to_string_lossy().to_string();
+
+    storage::write_bytes(&omega_s, "events/orders.jsonl", b"uno\n").unwrap();
+    let first = run_snapshot(&omega_s, &vault_s, "2026-10-28", false).unwrap();
+    assert!(!first.reused);
+    assert_eq!(first.files, 1);
+
+    // Sin cambios, el refresco no reescribe ni actualiza el manifiesto.
+    let created_at = read_manifest(&vault_s, "2026-10-28")
+      .unwrap()
+      .created_at;
+    let reused = run_snapshot_refresh(&omega_s, &vault_s, "2026-10-28").unwrap();
+    assert!(reused.reused);
+    assert_eq!(reused.files, 1);
+    assert_eq!(
+      read_manifest(&vault_s, "2026-10-28")
+        .unwrap()
+        .created_at,
+      created_at
+    );
+
+    // Si falta un archivo dentro del snapshot, el refresco lo vuelve a copiar.
+    storage::remove_file(&vault_s, "longlife/2026-10-28/events/orders.jsonl").unwrap();
+    let restored = run_snapshot_refresh(&omega_s, &vault_s, "2026-10-28").unwrap();
+    assert!(!restored.reused);
+    assert!(storage::exists(
+      &vault_s,
+      "longlife/2026-10-28/events/orders.jsonl"
+    )
+    .unwrap());
+
+    // Un cambio en omega se refleja en el snapshot del mismo día.
+    storage::append_bytes(&omega_s, "events/orders.jsonl", b"dos\n").unwrap();
+    storage::write_bytes(&omega_s, "events/customers.jsonl", b"cliente\n").unwrap();
+    let refreshed = run_snapshot_refresh(&omega_s, &vault_s, "2026-10-28").unwrap();
+    assert!(!refreshed.reused);
+    assert_eq!(refreshed.files, 2);
+    assert_eq!(
+      storage::read_string(&vault_s, "longlife/2026-10-28/events/orders.jsonl")
+        .unwrap()
+        .unwrap(),
+      "uno\ndos\n"
+    );
+    assert_eq!(
+      read_manifest(&vault_s, "2026-10-28").unwrap().files.len(),
+      2
+    );
+
+    // Un archivo borrado en omega también desaparece del snapshot.
+    storage::remove_file(&omega_s, "events/customers.jsonl").unwrap();
+    let cleaned = run_snapshot_refresh(&omega_s, &vault_s, "2026-10-28").unwrap();
+    assert!(!cleaned.reused);
+    assert_eq!(cleaned.files, 1);
+    assert!(!storage::exists(
+      &vault_s,
+      "longlife/2026-10-28/events/customers.jsonl"
+    )
+    .unwrap());
 
     let _ = std::fs::remove_dir_all(&base);
   }

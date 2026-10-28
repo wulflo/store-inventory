@@ -1,4 +1,5 @@
 import type { Domain, DomainEvent } from '../core/types';
+import { scheduleLonglifeSnapshot } from '../core/longlifeSnapshots';
 import {
   type EventStore,
   type ExportBundle,
@@ -54,6 +55,7 @@ export class TauriEventStore implements EventStore {
     });
     this.lastSeen.set(domain, Date.now());
     this.emit(domain);
+    scheduleLonglifeSnapshot();
   }
 
   async read(domain: Domain): Promise<DomainEvent[]> {
@@ -148,6 +150,7 @@ export class TauriEventStore implements EventStore {
     if (!this.root) return;
     await this.invoke<void>('store_clear', { root: this.root });
     this.lastSeen.clear();
+    scheduleLonglifeSnapshot();
   }
 
   /* ---------------------------------------------------------------- */

@@ -8,6 +8,7 @@ import { TauriEventStore } from './store/TauriEventStore';
 import { MemoryEventStore, WebEventStore } from './store/WebEventStore';
 import type { EventStore } from './store/EventStore';
 import { uuid7 } from './core/ids';
+import { initLonglifeSnapshots } from './core/longlifeSnapshots';
 import { applyTheme } from './ui/theme';
 
 import { dashboardView } from './ui/views/dashboard';
@@ -122,16 +123,9 @@ async function boot(): Promise<void> {
     });
   }
 
-  /* --- Copias longlife: una por día, al iniciar y cada 24 h --- */
+  /* --- Copias longlife: al iniciar, tras cambios, al salir y cada 24 h --- */
   if (isTauri()) {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const runLonglife = () => {
-      void invoke('longlife_run', { force: false }).catch((err) => {
-        console.warn('No se pudo crear la copia longlife:', err);
-      });
-    };
-    runLonglife();
-    window.setInterval(runLonglife, 24 * 60 * 60 * 1000);
+    void initLonglifeSnapshots();
   }
 
   /* --- Interfaz --- */
@@ -215,7 +209,7 @@ function registerRoutes(app: App, shell: Shell): void {
 
   const longlife = (): void => {
     const store = (app as any).store;
-    shell.setTitle('Copias longlife', 'Bóveda y snapshots diarios');
+    shell.setTitle('Copias longlife', 'Bóveda y snapshots automáticos');
     if (store && typeof store.getRoot === 'function') {
       const elHost = el('div');
       mount(shell.outlet, elHost);

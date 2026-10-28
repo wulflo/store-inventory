@@ -56,7 +56,7 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 - Preferences: currency (ARS/USD/EUR) and light/dark theme.
 - Export/import JSON backup (all events).
 - Initial CSV import (products, customers, orders) with column mapping.
-- **Bóveda elegida por el usuario:** los datos viven en `<bóveda>/omega/`; las copias diarias en `<bóveda>/longlife/YYYY-MM-DD/`, con retención de 7 días. No hay sincronización P2P/LAN integrada.
+- **Bóveda elegida por el usuario:** los datos viven en `<bóveda>/omega/`; las copias diarias en `<bóveda>/longlife/YYYY-MM-DD/`, con retención de 7 días. La copia del día se actualiza unos minutos después de cada cambio y al cerrar o pasar a segundo plano. No hay sincronización P2P/LAN integrada.
 - **Sincronización externa opcional:** la bóveda se puede compartir con Google Drive + Foldersync, Syncthing u otro agente de archivos. La app solo lee/escribe la carpeta; no fusiona conflictos.
 - **Updates:** signed search and installation with minisign. Desktop uses Tauri updater; Android downloads APK, verifies signature and saves to **Downloads** folder for manual installation.
 - **Payload encryption (obligatoria):** random 32-byte DEK that encrypts each event `payload` with XChaCha20-Poly1305; the DEK is wrapped (Argon2id) by a master password **and** a one-time recovery code. Metadata stays in plaintext for ordering. The keyring lives in `<bóveda>/omega/keys/keyring.json`; the unlocked key only in RAM. La misma contraseña/código abre la bóveda en otro equipo. Password change re-wraps the DEK; key rotation re-encrypts everything.
@@ -76,7 +76,7 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 - Desktop: el usuario elige una carpeta bóveda; los datos quedan en `<bóveda>/omega`.
 - Android: el usuario elige una carpeta mediante SAF; los datos quedan en `<bóveda>/omega`.
 - No hay sync P2P/LAN. Para compartir entre equipos, usar un agente externo sobre la carpeta (Google Drive + Foldersync, Syncthing, etc.) y no editar en dos equipos a la vez.
-- Manual JSON export plus daily snapshots in `<bóveda>/longlife` (local o nube si la bóveda está sincronizada).
+- Manual JSON export plus automatic snapshots in `<bóveda>/longlife` (daily, refreshed after changes; local o nube si la bóveda está sincronizada).
 
 ### Development Requirements
 - Node 20+ and npm.

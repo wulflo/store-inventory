@@ -103,7 +103,7 @@ function downloadText(filename: string, contents: string): void {
  */
 async function refreshDailyBackup(): Promise<void> {
   try {
-    await invokeCmd('longlife_run', { force: true });
+    await invokeCmd('longlife_run', { refresh: true });
   } catch (err) {
     toast(
       `El cifrado quedó activo, pero no se pudo actualizar la copia longlife del día: ${
