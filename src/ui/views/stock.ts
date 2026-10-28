@@ -4,8 +4,8 @@ import type { Shell } from '../app';
 import type { App } from '../../app/App';
 import { lowStockRows, stockRows } from '../../projection/queries';
 import { showError, toastSuccess } from '../components/toast';
-import { addStockMovement } from '../../domain/commands';
-import { openModal } from '../components/modal';
+import { addStockMovement, deleteProduct } from '../../domain/commands';
+import { confirmDialog, openModal } from '../components/modal';
 import { formatDateTime } from '../../core/dates';
 import { parseMoneyToCents } from '../../core/money';
 import type { MovementType, Variant } from '../../core/types';
@@ -260,6 +260,36 @@ export function stockView(app: App, shell: Shell): HTMLElement {
                   title: last ? `Último: ${formatDateTime(last)}` : '',
                   on: { click: () => openMovement(app, row.variant!) },
                 },
+              ),
+              el(
+                'button',
+                {
+                  class: 'btn btn-sm btn-ghost',
+                  type: 'button',
+                  title: 'Eliminar producto',
+                  'aria-label': 'Eliminar producto',
+                  on: {
+                    click: async () => {
+                      const product = row.product;
+                      if (!product) return;
+                      const ok = await confirmDialog({
+                        title: 'Eliminar producto',
+                        message: `¿Eliminar "${product.name}"? Se archiva el producto y todas sus variantes dejan de aparecer en Stock. Los pedidos históricos se conservan.`,
+                        confirmLabel: 'Eliminar',
+                        danger: true,
+                      });
+                      if (!ok) return;
+                      try {
+                        await deleteProduct(app, product.id);
+                        toastSuccess('Producto eliminado.');
+                        render();
+                      } catch (err) {
+                        showError(err);
+                      }
+                    },
+                  },
+                },
+                icon('trash', 16),
               ),
             ),
           ),

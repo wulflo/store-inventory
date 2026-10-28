@@ -91,24 +91,55 @@ pub fn local_lan_addresses() -> Vec<String> {
   out
 }
 
-/** IPv4 de la LAN preferida para anuncios y códigos QR (prioriza Wi-Fi privada). */
+/**
+ * IPv4 de la LAN preferida para anuncios y códigos QR.
+ *
+ * Prioriza Wi-Fi/Ethernet sobre interfaces móviles o VPN. En Android es
+ * habitual tener `wlan0` (Wi-Fi) y `rmnet_data0` (datos móviles) con IPs
+ * privadas al mismo tiempo; elegir la móvil producía un QR con una dirección
+ * inalcanzable desde el otro dispositivo.
+ */
 pub fn preferred_lan_ipv4() -> Option<Ipv4Addr> {
   let interfaces = if_addrs::get_if_addrs().ok()?;
-  let mut private = Vec::new();
-  let mut link_local = Vec::new();
+  let mut candidates: Vec<(u8, Ipv4Addr)> = Vec::new();
   for iface in interfaces {
     if iface.is_loopback() {
       continue;
     }
-    if let if_addrs::IfAddr::V4(v4) = iface.addr {
-      if v4.ip.is_private() {
-        private.push(v4.ip);
-      } else if v4.ip.is_link_local() {
-        link_local.push(v4.ip);
-      }
+    let if_addrs::IfAddr::V4(v4) = iface.addr else {
+      continue;
+    };
+    if !v4.ip.is_private() && !v4.ip.is_link_local() {
+      continue;
     }
+    let name = iface.name.to_ascii_lowercase();
+    let kind = if name.starts_with("wlan")
+      || name.starts_with("wl")
+      || name.contains("wifi")
+      || name.contains("wi-fi")
+    {
+      0
+    } else if name.starts_with("en") || name.starts_with("eth") {
+      1
+    } else if name.starts_with("rmnet")
+      || name.starts_with("ccmni")
+      || name.starts_with("pdp")
+      || name.starts_with("wwan")
+    {
+      3
+    } else if name.starts_with("tun")
+      || name.starts_with("tap")
+      || name.contains("vpn")
+    {
+      4
+    } else {
+      2
+    };
+    let reachability = if v4.ip.is_private() { 0 } else { 1 };
+    candidates.push((kind * 2 + reachability, v4.ip));
   }
-  private.into_iter().next().or_else(|| link_local.into_iter().next())
+  candidates.sort_by_key(|(priority, _)| *priority);
+  candidates.first().map(|(_, ip)| *ip)
 }
 
 /** Direcciones de broadcast IPv4 de cada interfaz LAN (para descubrimiento). */

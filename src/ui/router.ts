@@ -14,6 +14,7 @@ interface Route {
 export class Router {
   private routes: Route[] = [];
   private current: Route | null = null;
+  private currentParams: Record<string, string> = {};
   private notFoundHandler: RouteHandler = () => {};
 
   constructor(private outlet: HTMLElement) {
@@ -67,6 +68,7 @@ export class Router {
       if (!ok) continue;
 
       this.current = route;
+      this.currentParams = params;
       await route.handler(params);
       this.outlet.scrollTo?.({ top: 0 });
       window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
@@ -75,6 +77,19 @@ export class Router {
 
     this.current = null;
     await this.notFoundHandler({});
+  }
+
+  /**
+   * Vuelve a pintar la ruta actual sin navegar ni cambiar el scroll.
+   * Se usa cuando llegan datos de otro dispositivo y la vista debe reflejar
+   * el estado nuevo sin obligar al usuario a salir y volver a entrar.
+   */
+  async reload(): Promise<void> {
+    if (!this.current) {
+      await this.resolve();
+      return;
+    }
+    await this.current.handler(this.currentParams);
   }
 
   start(): void {

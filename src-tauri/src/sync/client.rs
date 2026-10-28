@@ -2,7 +2,7 @@ use crate::sync::framing::{read_frame_async, FrameType};
 use crate::sync::identity::{fingerprint_from_der, Identity};
 use crate::sync::pairing::now_ms;
 use crate::sync::peer::Peer;
-use crate::sync::protocol::{batch_events, diff_summaries, validate_incoming_event, SyncSummary};
+use crate::sync::protocol::{batch_events, divergent_domains, validate_incoming_event, SyncSummary};
 use crate::sync::store::{append_missing, load_all, summaries_for};
 use crate::sync::tls;
 use crate::sync::wire::{read_json, write_json, EventsPayload, IdListPayload, SyncHello, SyncReport};
@@ -18,7 +18,10 @@ use tokio::net::TcpStream;
 /* Cliente de sincronización                                          */
 /* ------------------------------------------------------------------ */
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+// Una IP de LAN que no responde suele estar apagada o fuera de la red. Con
+// 10 s el usuario veía "tiempo de espera agotado" y la app parecía colgada;
+// 4 s permiten probar la siguiente dirección (p. ej. la descubierta) rápido.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
 const SYNC_TIMEOUT: Duration = Duration::from_secs(300);
 const FUTURE_TOLERANCE_MS: u64 = 24 * 60 * 60 * 1000;
 
@@ -109,41 +112,45 @@ pub async fn sync_peer(
       ));
     }
 
-    let diff = diff_summaries(&local_summary.summaries, &remote_summary.summaries);
+    let divergent = divergent_domains(&local_summary.summaries, &remote_summary.summaries);
     let mut sent = 0usize;
     let mut received = 0usize;
     let mut domains = BTreeSet::new();
     let now = now_ms();
 
-    // Enviar lista de IDs que YA tenemos por dominio (sincronización por delta)
-    let mut domains_to_consider: Vec<String> = local_all.keys().cloned().collect();
-    for d in diff.keys() {
-      if !domains_to_consider.contains(d) {
-        domains_to_consider.push(d.clone());
-      }
-    }
-    domains_to_consider.sort();
+    // Solo intercambiamos listas de IDs en los dominios que realmente
+    // difieren. Antes se enviaban los 14 dominios en cada pasada: aunque no
+    // hubiera cambios, el otro lado tenía que recorrer todos los IDs y la
+    // sincronización tardaba 10 s en cerrar (esperando el timeout de frame).
+    let mut pending_id_lists: BTreeSet<String> =
+      divergent.iter().map(|d| d.domain.clone()).collect();
 
-    for domain in &domains_to_consider {
-      let events = local_all.get(domain).cloned().unwrap_or_default();
+    for d in &divergent {
+      let events = local_all.get(&d.domain).cloned().unwrap_or_default();
       let ids: Vec<String> = events.iter().map(|e| e.id.clone()).collect();
-      // Enviar también las listas vacías: si el otro equipo tiene eventos en
-      // un dominio que nosotros no conocemos, necesita saber que nos faltan
-      // todos para poder enviarlos. Antes se omitían y un dispositivo nuevo
-      // terminaba sin el catálogo, aunque el sync dijera "completado".
+      // Enviamos también listas vacías en los dominios divergentes: si el
+      // otro equipo tiene eventos que nosotros no conocemos, necesita saber
+      // que nos faltan todos para poder enviarlos.
       write_json(
         &mut stream,
         FrameType::IdList,
         &IdListPayload {
-          domain: domain.clone(),
+          domain: d.domain.clone(),
           ids,
         },
       )
       .await?;
     }
 
-    // Procesar IdList del servidor y enviar SOLO los eventos que le falten
+    // Sin dominios divergentes no hay nada que intercambiar: cerramos de
+    // inmediato en vez de esperar 10 s a que venza el timeout de lectura.
     let mut sent_bye = false;
+    if pending_id_lists.is_empty() {
+      write_json(&mut stream, FrameType::Bye, &serde_json::json!({})).await?;
+      sent_bye = true;
+    }
+
+    // Procesar IdList del servidor y enviar SOLO los eventos que le falten
     loop {
       // 10 s por frame: 2 s era demasiado agresivo en Wi-Fi y podía cortar
       // la recepción de lotes grandes antes de que llegaran todos.
@@ -151,10 +158,10 @@ pub async fn sync_peer(
         Ok(Ok(f)) => f,
         Ok(Err(e)) => return Err(format!("Error leyendo del peer: {e}")),
         Err(_) => {
-          // Timeout: enviar Bye y terminar
+          // Si ya enviamos Bye, el peer simplemente no lo confirmó; no es un
+          // error de datos. Si todavía esperábamos listas, el peer se colgó.
           if !sent_bye {
-            let _ = write_json(&mut stream, FrameType::Bye, &serde_json::json!({})).await;
-            sent_bye = true;
+            return Err("El peer dejó de responder durante la sincronización.".into());
           }
           break;
         }
@@ -166,6 +173,7 @@ pub async fn sync_peer(
           if list.domain.is_empty() {
             continue;
           }
+          pending_id_lists.remove(&list.domain);
           let remote_ids: BTreeSet<String> = list.ids.into_iter().collect();
           let local_events = local_all.get(&list.domain).cloned().unwrap_or_default();
           let mut to_send: Vec<crate::sync::store_types::DomainEvent> = Vec::new();
@@ -188,6 +196,10 @@ pub async fn sync_peer(
               sent += batch.events.len();
               domains.insert(batch.domain.clone());
             }
+          }
+          if pending_id_lists.is_empty() && !sent_bye {
+            write_json(&mut stream, FrameType::Bye, &serde_json::json!({})).await?;
+            sent_bye = true;
           }
         }
         FrameType::Events => {

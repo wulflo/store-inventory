@@ -112,7 +112,11 @@ async function boot(): Promise<void> {
   if (isTauri()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('sync_start', { name: deviceName() });
+      // Usar el nombre que el usuario eligió (si ya existe) para no pisarlo
+      // con el nombre del sistema al arrancar.
+      const currentName =
+        app.state.devices.get(deviceId)?.name?.trim() || deviceName();
+      await invoke('sync_start', { name: currentName });
     } catch (err) {
       console.warn('sync_start automático falló', err);
     }
@@ -167,16 +171,12 @@ async function boot(): Promise<void> {
       await refreshBattery();
       startAutoSync();
 
-      // La app queda visible en la LAN desde el arranque (como Syncthing), sin
-      // que el usuario tenga que pulsar "Activar" en Ajustes.
-      const { invoke } = await import('@tauri-apps/api/core');
-      const currentName =
-        app.state.devices.get(deviceId)?.name?.trim() || deviceName();
-      invoke('sync_start', { name: currentName }).catch((err) => {
-        console.warn('No se pudo iniciar la sincronización automática', err);
-      });
+      // El servidor ya se inició una sola vez más arriba con `sync_start`.
+      // Llamarlo de nuevo aquí no aportaba nada y podía competir con la
+      // bandeja de emparejamiento durante el arranque.
 
       // Auto-backup al abrir si no hay backup de hoy
+      const { invoke } = await import('@tauri-apps/api/core');
       const root = (store as TauriEventStore).getRoot();
       if (root) {
         // backup automático respetando modo

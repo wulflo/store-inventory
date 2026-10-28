@@ -2,7 +2,7 @@ use crate::sync::client;
 use crate::sync::discovery::{
   start_discovery, DiscoveredPeer, DiscoveryAnnounce, DiscoveryHandle,
 };
-use crate::sync::identity::{cert_der_to_pem, fingerprint_from_der, identity_dir, Identity};
+use crate::sync::identity::{identity_dir, Identity};
 use crate::sync::net::{
   local_lan_addresses, preferred_lan_ipv4, validate_peer_addr,
 };
@@ -10,14 +10,12 @@ use crate::sync::pairing::{
   connect_pairing, now_ms, PairQrPayload, PendingPairing, PairingRegistry, PAIRING_QR_TTL_MS,
 };
 use crate::sync::ports::{SyncPorts, DEFAULT_PAIRING_PORT};
-use crate::sync::peer::{Peer, PeersStore};
+use crate::sync::peer::{peer_from_pending, Peer, PeersStore};
 use crate::sync::server::{
   start_pairing_server, start_sync_server, PairingServerHandle, SyncServerHandle,
 };
 use crate::sync::wire::SyncReport;
 use rand::RngCore;
-use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::CertificateDer;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -66,7 +64,40 @@ pub struct SyncManager {
   pending: Arc<Mutex<PairingRegistry>>,
   discovery: Mutex<Option<DiscoveryHandle>>,
   discovered: Arc<Mutex<HashMap<String, DiscoveredPeer>>>,
+  /** Última sincronización entrante por device_id, para no duplicar sesiones. */
+  last_inbound: Arc<Mutex<HashMap<String, u64>>>,
   sync_lock: AsyncMutex<()>,
+}
+
+/**
+ * Direcciones a probar para un QR, en orden: la principal, las adicionales y,
+ * al final, la vista por discovery. El puerto del QR es autoritativo y nunca
+ * se reemplaza por el puerto local.
+ */
+fn qr_connection_candidates(
+  qr: &PairQrPayload,
+  discovered: Option<&DiscoveredPeer>,
+  default_port: u16,
+) -> Vec<std::net::SocketAddr> {
+  let mut candidates: Vec<std::net::SocketAddr> = Vec::new();
+  for text in std::iter::once(&qr.addr).chain(qr.addrs.iter()) {
+    if let Ok(addr) = validate_peer_addr(text, default_port) {
+      if !candidates.contains(&addr) {
+        candidates.push(addr);
+      }
+    }
+  }
+  if let Some(peer) = discovered {
+    if let Ok(alt) = validate_peer_addr(
+      &format!("{}:{}", peer.ip, peer.pairing_port),
+      default_port,
+    ) {
+      if !candidates.contains(&alt) {
+        candidates.push(alt);
+      }
+    }
+  }
+  candidates
 }
 
 impl SyncManager {
@@ -90,6 +121,7 @@ impl SyncManager {
       pending: Arc::new(Mutex::new(PairingRegistry::new())),
       discovery: Mutex::new(None),
       discovered: Arc::new(Mutex::new(HashMap::new())),
+      last_inbound: Arc::new(Mutex::new(HashMap::new())),
       sync_lock: AsyncMutex::new(()),
     }
   }
@@ -193,11 +225,14 @@ impl SyncManager {
   }
 
   pub fn is_running(&self) -> bool {
-    self
-      .server
-      .lock()
-      .unwrap_or_else(|e| e.into_inner())
-      .is_some()
+    let mut guard = self.server.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.as_ref().map(|handle| handle.is_alive()).unwrap_or(false) {
+      return true;
+    }
+    // Si la tarea murió (por ejemplo, un error de `accept`), descartamos el
+    // handle para que `start()` pueda volver a abrir el puerto.
+    guard.take();
+    false
   }
 
   pub fn ports(&self) -> SyncPorts {
@@ -236,6 +271,7 @@ impl SyncManager {
       self.root.clone(),
       self.app.clone(),
       self.ports(),
+      Arc::clone(&self.last_inbound),
     )
     .await?;
     {
@@ -310,12 +346,21 @@ impl SyncManager {
 
   /** Abre el listener de emparejamiento si todavía no está activo. */
   async fn ensure_pairing_inbox(&self, identity: &Identity) -> Result<(), String> {
-    if self
-      .pairing_server
-      .lock()
-      .unwrap_or_else(|e| e.into_inner())
-      .is_some()
-    {
+    let alive = {
+      let mut guard = self
+        .pairing_server
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+      let alive = guard
+        .as_ref()
+        .map(|handle| handle.is_alive())
+        .unwrap_or(false);
+      if !alive {
+        guard.take();
+      }
+      alive
+    };
+    if alive {
       return Ok(());
     }
     match start_pairing_server(
@@ -323,6 +368,8 @@ impl SyncManager {
       self.ports(),
       Arc::clone(&self.pending),
       Arc::clone(&self.pairing_token),
+      Arc::clone(&self.peers),
+      self.peers_path.clone(),
       self.app.clone(),
     )
     .await
@@ -518,23 +565,32 @@ impl SyncManager {
       .identity
       .as_ref()
       .ok_or_else(|| "Todavía no hay identidad de dispositivo.".to_string())?;
-    let ip = preferred_lan_ipv4()
-      .map(|ip| ip.to_string())
-      .or_else(|| {
-        info
-          .addresses
-          .iter()
-          .find(|address| address.parse::<std::net::Ipv4Addr>().is_ok())
-          .cloned()
-      })
-      .ok_or_else(|| {
-        "No se encontró una IP LAN. Conectate a la misma red Wi-Fi que el otro dispositivo."
-          .to_string()
-      })?;
+    // Incluimos todas las IPv4 LAN, con la preferida primero. Si el equipo
+    // tiene Wi-Fi + Ethernet + VPN, el escáner puede probar las demás aunque
+    // la primera no sea la interfaz correcta.
+    let mut ips: Vec<String> = Vec::new();
+    if let Some(ip) = preferred_lan_ipv4() {
+      ips.push(ip.to_string());
+    }
+    for address in &info.addresses {
+      if address.parse::<std::net::Ipv4Addr>().is_ok() && !ips.contains(address) {
+        ips.push(address.clone());
+      }
+    }
+    let addrs: Vec<String> = ips
+      .iter()
+      .take(4)
+      .map(|ip| format!("{ip}:{}", info.pairing_port))
+      .collect();
+    let addr = addrs.first().cloned().ok_or_else(|| {
+      "No se encontró una IP LAN. Conectate a la misma red Wi-Fi que el otro dispositivo."
+        .to_string()
+    })?;
     let payload = PairQrPayload {
       v: 1,
       app: "inventario-tienda".into(),
-      addr: format!("{ip}:{}", info.pairing_port),
+      addr,
+      addrs,
       fp: identity.fingerprint.clone(),
       id: identity.device_id.clone(),
       name: identity.name.clone(),
@@ -564,7 +620,7 @@ impl SyncManager {
     let verified = {
       let mut reg = self.pending.lock().unwrap_or_else(|e| e.into_inner());
       reg.prune();
-      reg.first().filter(|pending| pending.verified)
+      reg.list().into_iter().find(|pending| pending.verified)
     };
     if let Some(pending) = verified {
       // El peer demostró leer el QR: no hace falta que el usuario vuelva a
@@ -598,11 +654,13 @@ impl SyncManager {
     let base = validate_peer_addr(trimmed, ports.pairing)?;
     let mut candidates: Vec<std::net::SocketAddr> = Vec::new();
     if explicit_port {
-      let mut addr = base;
-      if addr.port() == ports.sync {
-        addr.set_port(ports.pairing);
+      // Respetamos el puerto que escribió el usuario. Si puso el puerto de
+      // sincronización por error, probamos además el de emparejamiento, pero
+      // sin reemplazar el original (podría ser un puerto custom del peer).
+      candidates.push(base);
+      if base.port() == ports.sync {
+        candidates.push(std::net::SocketAddr::new(base.ip(), ports.pairing));
       }
-      candidates.push(addr);
     } else {
       let ip = base.ip();
       let discovered_ports: Vec<u16> = self
@@ -668,35 +726,40 @@ impl SyncManager {
     let qr = PairQrPayload::decode(payload)?;
     let identity = self.ensure_identity(name)?;
     let ports = self.ports();
-    let mut addr = validate_peer_addr(&qr.addr, ports.pairing)?;
-    if addr.port() == ports.sync {
-      addr.set_port(ports.pairing);
+    let discovered = self
+      .discovered
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .get(&qr.id)
+      .cloned();
+    let candidates = qr_connection_candidates(&qr, discovered.as_ref(), ports.pairing);
+    if candidates.is_empty() {
+      return Err("El QR no contiene una dirección LAN válida.".into());
     }
-    let pending = match connect_pairing(&identity, addr, ports.sync, Some(&qr.token)).await {
-      Ok(pending) => pending,
-      Err(first_error) => {
-        // Si la IP del QR no responde (por ejemplo, el QR se generó con otra
-        // interfaz de red), reintentamos con la dirección vista por discovery.
-        let fallback = self
-          .discovered
-          .lock()
-          .unwrap_or_else(|e| e.into_inner())
-          .get(&qr.id)
-          .map(|peer| format!("{}:{}", peer.ip, peer.pairing_port));
-        match fallback {
-          Some(address) => {
-            let mut alt = validate_peer_addr(&address, ports.pairing)?;
-            if alt.port() == ports.sync {
-              alt.set_port(ports.pairing);
-            }
-            connect_pairing(&identity, alt, ports.sync, Some(&qr.token))
-              .await
-              .map_err(|e| format!("{first_error}. Reintento por LAN: {e}"))?
-          }
-          None => return Err(first_error),
+
+    let mut errors: Vec<String> = Vec::new();
+    let mut pending = None;
+    for candidate in candidates {
+      match tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        connect_pairing(&identity, candidate, ports.sync, Some(&qr.token)),
+      )
+      .await
+      {
+        Ok(Ok(value)) => {
+          pending = Some(value);
+          break;
         }
+        Ok(Err(err)) => errors.push(format!("{candidate}: {err}")),
+        Err(_) => errors.push(format!("{candidate}: sin respuesta")),
       }
-    };
+    }
+    let pending = pending.ok_or_else(|| {
+      format!(
+        "No se pudo conectar con el dispositivo del QR. {}",
+        errors.join(" · ")
+      )
+    })?;
     if !pending.fingerprint.eq_ignore_ascii_case(&qr.fp) || pending.device_id != qr.id {
       return Err(
         "El dispositivo que respondió no coincide con el QR. No se emparejó por seguridad."
@@ -708,6 +771,15 @@ impl SyncManager {
       .lock()
       .unwrap_or_else(|e| e.into_inner())
       .add(pending.clone());
+    if !pending.verified {
+      // El QR venció o el otro equipo no pudo validar el token. No damos el
+      // emparejamiento por bueno: dejamos la solicitud pendiente para que
+      // ambos comparen el código de 6 dígitos y confirmen manualmente.
+      return Err(
+        "El QR venció o el otro equipo no pudo verificarlo. Quedó una solicitud pendiente: compará el código de 6 dígitos y confirmá en ambos equipos."
+          .into(),
+      );
+    }
     self.confirm_pairing(&pending.device_id)
   }
 
@@ -719,22 +791,7 @@ impl SyncManager {
     }
     .ok_or_else(|| "El emparejamiento expiró o ya no está disponible.".to_string())?;
 
-    let cert_der = CertificateDer::from_pem_slice(pending.cert_pem.as_bytes())
-      .map_err(|e| format!("Certificado del peer inválido: {e}"))?
-      .as_ref()
-      .to_vec();
-    if fingerprint_from_der(&cert_der) != pending.fingerprint {
-      return Err("El certificado del peer no coincide con la huella mostrada.".into());
-    }
-
-    let mut peer = Peer::new(
-      pending.device_id.clone(),
-      pending.name.clone(),
-      pending.fingerprint.clone(),
-    )
-    .with_cert(cert_der_to_pem(&cert_der));
-    peer.address = Some(pending.address);
-    peer.trusted = true;
+    let peer = peer_from_pending(&pending)?;
 
     {
       let mut store = self.peers.lock().unwrap_or_else(|e| e.into_inner());
@@ -805,8 +862,10 @@ impl SyncManager {
     let mut candidates: Vec<String> = Vec::new();
     for candidate in [
       address_override.map(str::to_string),
-      peer.address.clone(),
+      // La dirección descubierta es más fresca que la última guardada. Antes
+      // se probaba primero la vieja y cada IP caducada costaba 10 s de espera.
       self.discovered_address(device_id),
+      peer.address.clone(),
     ]
     .into_iter()
     .flatten()
@@ -854,11 +913,16 @@ impl SyncManager {
       store.mark_seen(device_id, Some(&used_address));
       store.persist(&self.peers_path)?;
     }
-    let _ = self.app.emit("sync-updated", &report);
+    // Solo pedimos a la UI que reconstruya si realmente llegaron eventos.
+    // Un sync sin cambios (o en el que solo enviamos) no modifica el estado
+    // local; emitir igualmente hacía que la app se repintara cada minuto.
+    if report.received > 0 {
+      let _ = self.app.emit("sync-updated", &report);
+    }
     Ok(report)
   }
 
-  pub async fn sync_all(&self) -> Result<SyncBatchResult, String> {
+  pub async fn sync_all(&self, auto: bool) -> Result<SyncBatchResult, String> {
     let peers = self.list_peers();
     if peers.is_empty() {
       // Sin peers no es un error: el auto-sync simplemente no tiene nada que hacer.
@@ -867,15 +931,59 @@ impl SyncManager {
         errors: Vec::new(),
       });
     }
+
+    // En modo automático solo inicia el dispositivo con el device_id menor.
+    // Así dos equipos no abren una conexión cada uno al mismo tiempo (lo que
+    // producía conexiones duplicadas y carreras de sincronización). El otro
+    // lado sigue atendiendo la conexión entrante; el botón manual siempre
+    // fuerza la sincronización sin importar el orden.
+    let local_id = if auto {
+      self.identity_for_sync().ok().map(|id| id.device_id)
+    } else {
+      None
+    };
+
     let mut reports = Vec::new();
     let mut errors = Vec::new();
+    let mut waited_for_inbound = false;
     for peer in peers {
+      if auto && self.recent_inbound(&peer.device_id, 10_000) {
+        // Ya sincronizamos con este peer hace un instante (él inició la
+        // conexión). No abrimos otra sesión en la dirección contraria.
+        continue;
+      }
+      if let Some(local_id) = &local_id {
+        if local_id.to_ascii_lowercase() > peer.device_id.to_ascii_lowercase() {
+          // El otro equipo tiene prioridad como iniciador. Le damos un
+          // instante para que abra la conexión; si no lo hizo (por ejemplo,
+          // tiene el auto-sync desactivado), tomamos la iniciativa.
+          if !waited_for_inbound {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            waited_for_inbound = true;
+          }
+          if self.recent_inbound(&peer.device_id, 15_000) {
+            continue;
+          }
+        }
+      }
       match self.sync_peer(&peer.device_id, None).await {
         Ok(report) => reports.push(report),
         Err(e) => errors.push(format!("{}: {e}", peer.name)),
       }
     }
     Ok(SyncBatchResult { reports, errors })
+  }
+
+  fn recent_inbound(&self, device_id: &str, within_ms: u64) -> bool {
+    let seen = self
+      .last_inbound
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .get(device_id)
+      .copied();
+    seen
+      .map(|at| now_ms().saturating_sub(at) <= within_ms)
+      .unwrap_or(false)
   }
 
   /**
@@ -939,5 +1047,65 @@ impl SyncManager {
     }
     found.sort();
     Ok(found)
+  }
+}
+
+#[cfg(test)]
+mod pairing_candidates_tests {
+  use super::*;
+
+  fn qr(addr: &str, addrs: &[&str]) -> PairQrPayload {
+    PairQrPayload {
+      v: 1,
+      app: "inventario-tienda".into(),
+      addr: addr.into(),
+      addrs: addrs.iter().map(|a| (*a).to_string()).collect(),
+      fp: "aa".into(),
+      id: "dev".into(),
+      name: "Peer".into(),
+      token: "0123456789abcdef".into(),
+    }
+  }
+
+  #[test]
+  fn qr_port_is_authoritative_even_if_it_matches_local_sync_port() {
+    // Caso del bug: el peer usa 14242 como pairing y nosotros 14242 como sync.
+    // Antes se reescribía a 14243 y se conectaba al puerto equivocado.
+    let candidates = qr_connection_candidates(
+      &qr("192.168.1.10:14242", &["192.168.1.10:14242", "10.0.0.5:15001"]),
+      None,
+      14243,
+    );
+    assert_eq!(candidates[0].to_string(), "192.168.1.10:14242");
+    assert!(candidates
+      .iter()
+      .any(|addr| addr.to_string() == "10.0.0.5:15001"));
+  }
+
+  #[test]
+  fn discovery_address_is_tried_last_and_public_ips_are_ignored() {
+    let peer = DiscoveredPeer {
+      device_id: "dev".into(),
+      name: "Peer".into(),
+      fingerprint: "aa".into(),
+      address: "192.168.1.10:16001".into(),
+      ip: "192.168.1.10".into(),
+      sync_port: 16000,
+      pairing_port: 16001,
+      pairing_active: true,
+      last_seen: 0,
+      paired: false,
+    };
+    let candidates = qr_connection_candidates(
+      &qr("192.168.1.10:15001", &["8.8.8.8:15001"]),
+      Some(&peer),
+      14243,
+    );
+    assert_eq!(candidates[0].to_string(), "192.168.1.10:15001");
+    assert_eq!(
+      candidates.last().unwrap().to_string(),
+      "192.168.1.10:16001"
+    );
+    assert!(!candidates.iter().any(|addr| addr.ip().to_string() == "8.8.8.8"));
   }
 }

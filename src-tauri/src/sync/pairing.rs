@@ -23,7 +23,7 @@ pub const PAIRING_PORT: u16 = crate::sync::ports::DEFAULT_PAIRING_PORT;
 pub const PAIRING_TTL_MS: u64 = 300_000;
 /// Vigencia del token de un QR. Pasado ese tiempo, la conexión sigue siendo
 /// válida pero requiere confirmación manual del SAS.
-pub const PAIRING_QR_TTL_MS: u64 = 120_000;
+pub const PAIRING_QR_TTL_MS: u64 = 300_000;
 
 pub fn now_ms() -> u64 {
   SystemTime::now()
@@ -45,6 +45,11 @@ pub struct PairHello {
   /// el QR confía automáticamente (el secreto solo pudo leerse del QR).
   #[serde(default)]
   pub pair_token: Option<String>,
+  /// Respuesta del lado que muestra el QR: `Some(true)` si el token coincidió.
+  /// El escáner no debe darse por emparejado hasta recibir esta confirmación.
+  /// Es `None` con versiones anteriores, que no enviaban el campo.
+  #[serde(default)]
+  pub token_ok: Option<bool>,
 }
 
 /** Candidato pendiente de confirmación manual por el usuario. */
@@ -73,6 +78,11 @@ pub struct PairQrPayload {
   pub app: String,
   /// Dirección IP:puerto del servidor de emparejamiento.
   pub addr: String,
+  /// Todas las direcciones LAN candidatas, en orden de preferencia. Sirve
+  /// cuando el equipo tiene Wi-Fi, Ethernet, VPN o interfaces virtuales y la
+  /// primera IP elegida no es la que alcanza el otro dispositivo.
+  #[serde(default)]
+  pub addrs: Vec<String>,
   /// Huella SHA-256 del certificado del dispositivo que muestra el QR.
   pub fp: String,
   pub id: String,
@@ -113,7 +123,15 @@ impl PairQrPayload {
     {
       return Err("El QR de emparejamiento está incompleto o es inválido.".into());
     }
-    validate_peer_addr(&payload.addr, PAIRING_PORT)?;
+    // Aceptamos el QR si al menos una de sus direcciones es LAN válida.
+    let addr_ok = validate_peer_addr(&payload.addr, PAIRING_PORT).is_ok();
+    let addrs_ok = payload
+      .addrs
+      .iter()
+      .any(|addr| validate_peer_addr(addr, PAIRING_PORT).is_ok());
+    if !addr_ok && !addrs_ok {
+      return Err("El QR no contiene una dirección LAN válida.".into());
+    }
     Ok(payload)
   }
 }
@@ -158,7 +176,12 @@ impl PairingRegistry {
   }
 }
 
-fn our_hello(identity: &Identity, sync_port: u16, pair_token: Option<&str>) -> PairHello {
+fn our_hello(
+  identity: &Identity,
+  sync_port: u16,
+  pair_token: Option<&str>,
+  token_ok: Option<bool>,
+) -> PairHello {
   PairHello {
     device_id: identity.device_id.clone(),
     name: identity.name.clone(),
@@ -166,6 +189,7 @@ fn our_hello(identity: &Identity, sync_port: u16, pair_token: Option<&str>) -> P
     sync_port,
     protocol_version: 1,
     pair_token: pair_token.map(str::to_string),
+    token_ok,
   }
 }
 
@@ -229,7 +253,7 @@ pub async fn accept_pairing(
   write_json(
     &mut stream,
     FrameType::Handshake,
-    &our_hello(identity, sync_port, None),
+    &our_hello(identity, sync_port, None, Some(verified)),
   )
   .await?;
 
@@ -283,7 +307,7 @@ pub async fn connect_pairing(
   write_json(
     &mut stream,
     FrameType::Handshake,
-    &our_hello(identity, sync_port, pair_token),
+    &our_hello(identity, sync_port, pair_token, None),
   )
   .await?;
   let (kind, hello): (FrameType, PairHello) = read_json(&mut stream).await?;
@@ -308,9 +332,11 @@ pub async fn connect_pairing(
     cert_pem: cert_der_to_pem(&peer_der),
     created_at: now,
     expires_at: now + PAIRING_TTL_MS,
-    // El iniciador ya conoce el token; la verificación real la hace el lado
-    // que muestra el QR. Para el iniciador el QR es la confirmación.
-    verified: pair_token.is_some(),
+    // El iniciador solo se considera verificado si el lado que muestra el QR
+    // confirma que el token coincidió. Con versiones viejas que no envían
+    // `token_ok`, mantenemos el comportamiento anterior (el QR era la
+    // confirmación) para no romper la compatibilidad.
+    verified: hello.token_ok.unwrap_or_else(|| pair_token.is_some()),
   })
 }
 
@@ -346,8 +372,88 @@ mod tests {
 #[cfg(test)]
 mod handshake_tests {
   use super::*;
+  use crate::sync::peer::peer_from_pending;
   use crate::sync::ports::DEFAULT_SYNC_PORT as SYNC_PORT;
   use crate::sync::tls;
+
+  #[tokio::test]
+  async fn qr_token_marks_both_sides_verified_and_builds_a_peer() {
+    let server_identity = Identity::generate("Servidor").unwrap();
+    let client_identity = Identity::generate("Cliente").unwrap();
+    let config = Arc::new(tls::pairing_server_config(&server_identity).unwrap());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+      .await
+      .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn({
+      let identity = server_identity.clone();
+      async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        accept_pairing(&identity, tcp, SYNC_PORT, config, Some("token-qr"))
+          .await
+          .unwrap()
+      }
+    });
+
+    let client = connect_pairing(
+      &client_identity,
+      addr,
+      SYNC_PORT,
+      Some("token-qr"),
+    )
+    .await
+    .unwrap();
+    let server = server.await.unwrap();
+
+    assert!(client.verified);
+    assert!(server.verified, "el lado que muestra el QR no verificó el token");
+
+    // El lado que muestra el QR debe poder confirmar sin intervención
+    // adicional; esto es lo que ahora hace el servidor de emparejamiento.
+    let peer = peer_from_pending(&server).unwrap();
+    assert_eq!(peer.device_id, client_identity.device_id);
+    assert_eq!(peer.fingerprint, client_identity.fingerprint());
+    assert_eq!(peer.address, Some(format!("127.0.0.1:{SYNC_PORT}")));
+    assert!(peer.trusted);
+    assert!(!peer.cert_pem.is_empty());
+  }
+
+  #[tokio::test]
+  async fn wrong_qr_token_is_not_verified() {
+    let server_identity = Identity::generate("Servidor").unwrap();
+    let client_identity = Identity::generate("Cliente").unwrap();
+    let config = Arc::new(tls::pairing_server_config(&server_identity).unwrap());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+      .await
+      .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn({
+      let identity = server_identity.clone();
+      async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        accept_pairing(&identity, tcp, SYNC_PORT, config, Some("token-correcto"))
+          .await
+          .unwrap()
+      }
+    });
+
+    let client = connect_pairing(
+      &client_identity,
+      addr,
+      SYNC_PORT,
+      Some("token-equivocado"),
+    )
+    .await
+    .unwrap();
+    let server = server.await.unwrap();
+
+    // Ninguno de los dos debe confiar: el lado que muestra el QR rechazó el
+    // token y el escáner recibe esa respuesta en `token_ok`.
+    assert!(!client.verified);
+    assert!(!server.verified);
+  }
 
   #[tokio::test]
   async fn both_sides_compute_the_same_sas() {
@@ -381,5 +487,41 @@ mod handshake_tests {
     assert_eq!(server.address, format!("127.0.0.1:{SYNC_PORT}"));
     assert_eq!(client.fingerprint, server_identity.fingerprint());
     assert_eq!(server.fingerprint, client_identity.fingerprint());
+  }
+}
+
+#[cfg(test)]
+mod qr_payload_tests {
+  use super::*;
+
+  fn payload() -> PairQrPayload {
+    PairQrPayload {
+      v: 1,
+      app: "inventario-tienda".into(),
+      addr: "192.168.1.10:14243".into(),
+      addrs: vec![
+        "192.168.1.10:14243".into(),
+        "10.0.0.5:14243".into(),
+      ],
+      fp: "aa".into(),
+      id: "dev".into(),
+      name: "Peer".into(),
+      token: "0123456789abcdef".into(),
+    }
+  }
+
+  #[test]
+  fn qr_roundtrip_keeps_all_candidate_addresses() {
+    let decoded = PairQrPayload::decode(&payload().encode().unwrap()).unwrap();
+    assert_eq!(decoded.addrs.len(), 2);
+    assert_eq!(decoded.addrs[1], "10.0.0.5:14243");
+  }
+
+  #[test]
+  fn qr_accepts_the_main_address_if_one_candidate_is_valid() {
+    let mut qr = payload();
+    qr.addr = "10.0.0.5:14243".into();
+    qr.addrs = vec!["192.168.1.10:14243".into()];
+    assert!(PairQrPayload::decode(&qr.encode().unwrap()).is_ok());
   }
 }

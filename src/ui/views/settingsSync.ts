@@ -265,7 +265,9 @@ export function settingsSyncCard(app: App): HTMLElement {
       }>('sync_pair_listen_start', { name: localName(app) });
       info = result.info;
       listening = true;
-      qrDataUrl = await QRCode.toDataURL(result.qr_payload, { width: 220, margin: 1 });
+      // Un QR más grande se lee mucho mejor en pantallas de teléfono y con
+      // cámaras de poca resolución.
+      qrDataUrl = await QRCode.toDataURL(result.qr_payload, { width: 300, margin: 2 });
       message = 'Esperando a que el otro dispositivo se conecte…';
       startPolling();
     } catch (err) {
@@ -399,8 +401,23 @@ export function settingsSyncCard(app: App): HTMLElement {
         /* el auto-sync lo reintenta */
       });
     } catch (err) {
+      // Si el QR venció, el backend deja una solicitud pendiente para que los
+      // dos equipos comparen el código SAS y confirmen manualmente.
+      try {
+        pending = await invoke<PendingPairing | null>('sync_pair_pending');
+      } catch {
+        pending = null;
+      }
+      listening = false;
+      if (pending) {
+        message =
+          'El QR venció o el otro equipo no pudo verificarlo. Compará el código de 6 dígitos y confirmá en ambos equipos.';
+        startPolling();
+        render();
+      } else {
+        message = '';
+      }
       showError(err);
-      message = '';
     } finally {
       setBusy(false);
     }
@@ -477,6 +494,8 @@ export function settingsSyncCard(app: App): HTMLElement {
       class: 'small muted',
       text: 'Apuntá la cámara al código QR del otro dispositivo.',
     });
+    let raf = 0;
+    let finished = false;
     const modal = openModal({
       title: 'Escanear código QR',
       body: el('div', {}, video, hint),
@@ -485,19 +504,19 @@ export function settingsSyncCard(app: App): HTMLElement {
           class: 'btn btn-ghost',
           type: 'button',
           text: 'Cancelar',
-          on: {
-            click: () => {
-              stream?.getTracks().forEach((t) => t.stop());
-              modal.close();
-            },
-          },
+          on: { click: () => modal.close() },
         }),
       ],
+      // Cualquier cierre (Cancelar, Escape, click en el fondo) debe apagar la
+      // cámara; antes solo lo hacía el botón Cancelar.
+      onClose: () => {
+        finished = true;
+        cancelAnimationFrame(raf);
+        stream?.getTracks().forEach((t) => t.stop());
+      },
     });
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    let raf = 0;
-    let finished = false;
     const nativeDetector = (() => {
       const Detector = (window as any).BarcodeDetector;
       if (!Detector) return null;
@@ -517,7 +536,12 @@ export function settingsSyncCard(app: App): HTMLElement {
     };
     const tick = (): void => {
       if (finished) return;
-      if (video.readyState >= video.HAVE_ENOUGH_DATA && ctx) {
+      if (
+        video.readyState >= video.HAVE_ENOUGH_DATA &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0 &&
+        ctx
+      ) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -541,10 +565,11 @@ export function settingsSyncCard(app: App): HTMLElement {
       }
       raf = requestAnimationFrame(tick);
     };
-    video.onloadedmetadata = () => {
-      void video.play().catch(() => {});
-      raf = requestAnimationFrame(tick);
-    };
+    // No dependemos de `onloadedmetadata`: si el video ya cargó antes de
+    // asignar el handler, el evento no vuelve a dispararse y el escaneo nunca
+    // arrancaba. El tick espera a que `readyState` esté listo.
+    void video.play().catch(() => {});
+    raf = requestAnimationFrame(tick);
   }
 
   async function syncPeer(peer: Peer): Promise<void> {
@@ -682,6 +707,8 @@ export function settingsSyncCard(app: App): HTMLElement {
     if (detail?.name) message = `${detail.name} quedó emparejado.`;
     toastSuccess('Dispositivo emparejado.');
     pending = null;
+    listening = false;
+    qrDataUrl = '';
     void load().then(render).catch(() => {});
     void invoke('sync_now', {}).catch(() => {
       /* el auto-sync lo reintenta */
@@ -991,7 +1018,12 @@ export function settingsSyncCard(app: App): HTMLElement {
         ? el('img', {
             src: qrDataUrl,
             alt: 'Código QR de emparejamiento',
-            style: { width: '220px', height: '220px', margin: '8px auto', display: 'block' },
+            style: {
+              width: 'min(300px, 100%)',
+              height: 'auto',
+              margin: '8px auto',
+              display: 'block',
+            },
           })
         : null,
       el(

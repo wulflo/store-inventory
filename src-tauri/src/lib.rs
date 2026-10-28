@@ -184,6 +184,7 @@ async fn sync_now(
   state: tauri::State<'_, SyncManager>,
   device_id: Option<String>,
   address: Option<String>,
+  auto: Option<bool>,
 ) -> Result<SyncBatchResult, String> {
   match device_id {
     Some(device_id) => {
@@ -195,7 +196,7 @@ async fn sync_now(
         errors: Vec::new(),
       })
     }
-    None => state.sync_all().await,
+    None => state.sync_all(auto.unwrap_or(false)).await,
   }
 }
 

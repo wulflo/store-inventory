@@ -1,3 +1,7 @@
+use crate::sync::identity::{cert_der_to_pem, device_id_from_cert, fingerprint_from_der};
+use crate::sync::pairing::PendingPairing;
+use rustls_pki_types::pem::PemObject;
+use rustls_pki_types::CertificateDer;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -44,6 +48,33 @@ impl Peer {
     self.cert_pem = cert_pem;
     self
   }
+}
+
+/**
+ * Convierte una solicitud de emparejamiento en un peer de confianza,
+ * verificando que el certificado corresponda a la huella mostrada.
+ */
+pub fn peer_from_pending(pending: &PendingPairing) -> Result<Peer, String> {
+  let cert_der = CertificateDer::from_pem_slice(pending.cert_pem.as_bytes())
+    .map_err(|e| format!("Certificado del peer inválido: {e}"))?
+    .as_ref()
+    .to_vec();
+  if !fingerprint_from_der(&cert_der).eq_ignore_ascii_case(&pending.fingerprint) {
+    return Err("El certificado del peer no coincide con la huella mostrada.".into());
+  }
+  if device_id_from_cert(&cert_der) != pending.device_id {
+    return Err("El identificador del peer no coincide con su certificado.".into());
+  }
+
+  let mut peer = Peer::new(
+    pending.device_id.clone(),
+    pending.name.clone(),
+    pending.fingerprint.clone(),
+  )
+  .with_cert(cert_der_to_pem(&cert_der));
+  peer.address = Some(pending.address.clone());
+  peer.trusted = true;
+  Ok(peer)
 }
 
 /* ------------------------------------------------------------------ */
@@ -134,7 +165,42 @@ impl PeersStore {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::sync::identity::Identity;
   use std::env::temp_dir;
+
+  fn pending_from(identity: &Identity) -> PendingPairing {
+    PendingPairing {
+      device_id: identity.device_id.clone(),
+      name: identity.name.clone(),
+      fingerprint: identity.fingerprint(),
+      sas: "123456".into(),
+      address: "192.168.1.50:14242".into(),
+      cert_pem: cert_der_to_pem(&identity.cert_der),
+      created_at: 1,
+      expires_at: u64::MAX,
+      verified: true,
+    }
+  }
+
+  #[test]
+  fn pending_peer_is_created_only_with_the_matching_certificate() {
+    let identity = Identity::generate("Telefono").unwrap();
+    let pending = pending_from(&identity);
+
+    let peer = peer_from_pending(&pending).unwrap();
+    assert_eq!(peer.device_id, identity.device_id);
+    assert_eq!(peer.fingerprint, identity.fingerprint());
+    assert_eq!(peer.address.as_deref(), Some("192.168.1.50:14242"));
+    assert!(peer.trusted);
+
+    let mut tampered = pending.clone();
+    tampered.fingerprint = "00:00:00".into();
+    assert!(peer_from_pending(&tampered).is_err());
+
+    let mut wrong_id = pending;
+    wrong_id.device_id = "otro-dispositivo".into();
+    assert!(peer_from_pending(&wrong_id).is_err());
+  }
 
   #[test]
   fn add_and_revoke_peer() {

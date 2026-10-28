@@ -250,9 +250,18 @@ fn line_event_id(line: &str) -> Option<String> {
 #[tauri::command]
 pub fn backup_status(root: String) -> Result<BackupStatus, String> {
   let vault_path = read_vault_path(&root);
+  // En Android la bóveda se guarda como URI SAF (content://...), que no
+  // existe como ruta del sistema de archivos. Usar Path::exists() hacía que
+  // la app dijera "sin bóveda" aunque estuviera configurada.
   let has_vault = vault_path
     .as_ref()
-    .map(|p| Path::new(p).exists())
+    .map(|p| {
+      if is_saf_uri(p) {
+        vault_accessible(p)
+      } else {
+        Path::new(p).exists()
+      }
+    })
     .unwrap_or(false);
   let (last_backup_date, last_backup_at) = last_backup_info(&root);
   Ok(BackupStatus {

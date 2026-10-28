@@ -44,6 +44,14 @@ pub struct Reconciliation {
   pub receive_ids: Vec<String>, // ids que el peer tiene y nosotros no
 }
 
+/** Dominio que difiere entre ambos resúmenes, con los conteos de cada lado. */
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DivergentDomain {
+  pub domain: String,
+  pub local_count: u64,
+  pub remote_count: u64,
+}
+
 /** Lote de eventos listo para enviar (≤ MAX_BATCH_EVENTS o ≤ MAX_BATCH_BYTES). */
 #[derive(Debug, Clone)]
 pub struct EventBatch {
@@ -83,6 +91,50 @@ fn hash_id(id: &str) -> u64 {
 /* ------------------------------------------------------------------ */
 /* Diff entre dos resúmenes                                           */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Dominios cuyo contenido difiere realmente entre ambos resúmenes.
+ *
+ * A diferencia de `diff_summaries`, conserva los conteos de cada lado para
+ * que el cliente y el servidor sepan cuántas listas de IDs esperar. Los
+ * dominios ausentes se tratan como vacíos (conteo 0, hash 0), igual que
+ * `compute_summary` para una lista vacía.
+ */
+pub fn divergent_domains(
+  local: &[DomainSummary],
+  remote: &[DomainSummary],
+) -> Vec<DivergentDomain> {
+  let mut local_map: BTreeMap<&str, &DomainSummary> = BTreeMap::new();
+  for s in local {
+    local_map.insert(s.domain.as_str(), s);
+  }
+  let mut remote_map: BTreeMap<&str, &DomainSummary> = BTreeMap::new();
+  for s in remote {
+    remote_map.insert(s.domain.as_str(), s);
+  }
+
+  let mut domains: Vec<&str> = local_map.keys().chain(remote_map.keys()).copied().collect();
+  domains.sort_unstable();
+  domains.dedup();
+
+  let mut out = Vec::new();
+  for domain in domains {
+    let l = local_map.get(domain);
+    let r = remote_map.get(domain);
+    let local_count = l.map(|s| s.event_count).unwrap_or(0);
+    let remote_count = r.map(|s| s.event_count).unwrap_or(0);
+    let local_hash = l.map(|s| s.aggregate_hash).unwrap_or(0);
+    let remote_hash = r.map(|s| s.aggregate_hash).unwrap_or(0);
+    if local_count != remote_count || local_hash != remote_hash {
+      out.push(DivergentDomain {
+        domain: domain.to_string(),
+        local_count,
+        remote_count,
+      });
+    }
+  }
+  out
+}
 
 pub fn diff_summaries(
   local: &[DomainSummary],
@@ -210,6 +262,34 @@ mod tests {
     let diff = diff_summaries(&[s_local], &[s_remote]);
     let d = diff.get("orders").unwrap();
     assert!(!d.0 && d.1); // remote tiene más
+  }
+
+  #[test]
+  fn divergent_domains_returns_counts_and_ignores_equal_domains() {
+    let ev1 = make_event("ev-1", 100);
+    let ev2 = make_event("ev-2", 200);
+    let orders_local = compute_summary("orders", &[ev1.clone()]);
+    let orders_remote = compute_summary("orders", &[ev1.clone(), ev2.clone()]);
+    let customers_local = compute_summary("customers", &[]);
+    let customers_remote = compute_summary("customers", &[]);
+
+    let divergent = divergent_domains(
+      &[orders_local, customers_local],
+      &[orders_remote, customers_remote],
+    );
+    assert_eq!(divergent.len(), 1);
+    assert_eq!(divergent[0].domain, "orders");
+    assert_eq!(divergent[0].local_count, 1);
+    assert_eq!(divergent[0].remote_count, 2);
+  }
+
+  #[test]
+  fn divergent_domains_detects_domains_missing_on_one_side() {
+    let ev1 = make_event("ev-1", 100);
+    let divergent = divergent_domains(&[], &[compute_summary("orders", &[ev1])]);
+    assert_eq!(divergent.len(), 1);
+    assert_eq!(divergent[0].local_count, 0);
+    assert_eq!(divergent[0].remote_count, 1);
   }
 
   #[test]

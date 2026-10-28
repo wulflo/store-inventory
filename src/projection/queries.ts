@@ -161,6 +161,10 @@ export function stockRows(state: AppState): StockRow[] {
     const agg = state.stock.get(variant.id);
     if (!agg) continue;
     const product = state.products.get(variant.productId);
+    // Archivar un producto emite Product.Deleted, pero sus variantes siguen
+    // existiendo para no romper pedidos históricos. Si no filtramos acá, el
+    // producto "eliminado" seguía apareciendo en Stock para siempre.
+    if (product?.deletedAt) continue;
     const color = state.colors.get(variant.colorId);
     const collection = product ? state.collections.get(product.collectionId) : undefined;
     rows.push({

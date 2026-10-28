@@ -27,6 +27,7 @@ const MIN_SYNC_INTERVAL_MS = 60_000;
 let config: SyncAutoConfig = { enabled: false, respect_battery_saver: true };
 let battery: BatteryStatus = { power_save_mode: false, battery_level: 100, is_charging: true, effective_mode: 'normal' };
 let debounceTimer: number | null = null;
+let debounceDueAt = 0;
 let periodicTimer: number | null = null;
 let retryTimer: number | null = null;
 let pendingReason: string | null = null;
@@ -100,12 +101,20 @@ export function scheduleSync(reason: string): void {
   const now = Date.now();
   const sinceLastSync = now - lastSyncAt;
   const wait = Math.max(getDebounceMs(), MIN_SYNC_INTERVAL_MS - sinceLastSync);
+  const dueAt = now + wait;
 
+  // No posponer un sync ya programado. El descubrimiento emite cada pocos
+  // segundos; antes cada anuncio reiniciaba el temporizador y el sync por
+  // cambio podía no ejecutarse nunca. Solo adelantamos si el nuevo motivo
+  // necesita hacerlo antes.
   if (debounceTimer !== null) {
+    if (dueAt >= debounceDueAt) return;
     clearTimeout(debounceTimer);
   }
+  debounceDueAt = dueAt;
   debounceTimer = window.setTimeout(() => {
     debounceTimer = null;
+    debounceDueAt = 0;
     void runAutoSync(reason);
   }, wait);
 }
@@ -123,8 +132,16 @@ export async function runAutoSync(reason: string): Promise<void> {
   }
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    // Sync all peers
-    const result = await invoke<any>('sync_now');
+    // `auto: true` deja que el backend elija un solo iniciador por par (el
+    // device_id menor) para que ambos equipos no abran conexiones a la vez.
+    const result = await invoke<any>('sync_now', { auto: true });
+    if (
+      Array.isArray(result?.errors) &&
+      result.errors.length > 0 &&
+      (!Array.isArray(result?.reports) || result.reports.length === 0)
+    ) {
+      throw new Error(result.errors.join(' · '));
+    }
     lastSyncAt = Date.now();
     consecutiveFailures = 0;
     console.info(`Auto-sync (${reason}): OK`, result);
@@ -165,6 +182,7 @@ export function stopAutoSync(): void {
     clearTimeout(debounceTimer);
     debounceTimer = null;
   }
+  debounceDueAt = 0;
   if (retryTimer !== null) {
     clearTimeout(retryTimer);
     retryTimer = null;

@@ -8,12 +8,13 @@ import {
   createCustomer,
   createOrder,
   createProduct,
+  deleteProduct,
   deliverOrderLine,
   generateVariants,
   setInitialStock,
   updateOrder,
 } from '../src/domain/commands';
-import { orderTotals } from '../src/projection/queries';
+import { orderTotals, stockRows } from '../src/projection/queries';
 import type { SizeCode } from '../src/core/types';
 
 /** Crea una app en memoria con 1 colección, 1 producto y 2 variantes. */
@@ -105,6 +106,18 @@ describe('stock', () => {
     const variantId = bySize.get('S')!;
     await setInitialStock(app, variantId, 4, 'Carga inicial');
     expect(app.state.stock.get(variantId)?.totalQty).toBe(4);
+  });
+
+  it('oculta en Stock las variantes de un producto eliminado', async () => {
+    const { app, productId } = await makeApp();
+    expect(stockRows(app.state)).toHaveLength(3);
+
+    await deleteProduct(app, productId);
+
+    // Las variantes siguen existiendo para pedidos históricos, pero no deben
+    // aparecer como filas de stock de un producto archivado.
+    expect([...app.state.variants.values()].some((v) => v.productId === productId)).toBe(true);
+    expect(stockRows(app.state)).toHaveLength(0);
   });
 });
 

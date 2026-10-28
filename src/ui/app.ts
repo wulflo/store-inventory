@@ -288,8 +288,61 @@ export function createShell(root: HTMLElement, app: App): Shell {
     }
   });
 
+  function isUserEditing(): boolean {
+    const active = document.activeElement as HTMLElement | null;
+    return (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      active instanceof HTMLSelectElement ||
+      !!active?.isContentEditable ||
+      !!document.querySelector('.modal-backdrop')
+    );
+  }
+
+  // Tras una sincronización el estado cambia, pero la vista actual seguía
+  // mostrando datos viejos hasta navegar a otra sección. La repintamos sin
+  // cambiar de ruta ni el scroll. Si el usuario está escribiendo o hay un
+  // modal abierto, esperamos a que termine para no perder lo que ingresó.
+  let pendingViewRefresh = false;
+  let viewRefreshTimer: number | null = null;
+
+  function requestViewRefresh(): void {
+    if (isUserEditing()) {
+      pendingViewRefresh = true;
+      return;
+    }
+    pendingViewRefresh = false;
+    const path = router.currentPath();
+    // Ajustes e importación manejan sus propios eventos y formularios largos.
+    if (
+      path.startsWith('/ajustes') ||
+      path === '/importar' ||
+      path.endsWith('/nuevo') ||
+      path.includes('/editar')
+    ) {
+      return;
+    }
+    if (viewRefreshTimer !== null) window.clearTimeout(viewRefreshTimer);
+    viewRefreshTimer = window.setTimeout(() => {
+      viewRefreshTimer = null;
+      void router.reload();
+    }, 80);
+  }
+
+  document.addEventListener('focusout', () => {
+    if (!pendingViewRefresh || isUserEditing()) return;
+    window.setTimeout(() => {
+      if (!isUserEditing()) requestViewRefresh();
+    }, 0);
+  });
+
   app.subscribe((event) => {
-    if (event.type === 'state') refresh();
+    if (event.type === 'state') {
+      refresh();
+      if (event.reason === 'rebuild' || event.reason.startsWith('sync:')) {
+        requestViewRefresh();
+      }
+    }
     if (event.type === 'error') toast(event.message, { kind: 'error' });
   });
 
