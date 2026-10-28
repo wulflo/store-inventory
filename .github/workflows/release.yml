@@ -141,12 +141,27 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run app:build -- --bundles deb,appimage
 
+      - name: Firmar .deb para el actualizador manual
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          DEB=$(find src-tauri/target/release/bundle/deb -type f -name '*.deb' | head -1)
+          if [ -z "$DEB" ]; then
+            echo "No se encontró el .deb" >&2
+            exit 1
+          fi
+          npx tauri signer sign --app-version "$VERSION" "$DEB"
+          test -f "$DEB.sig"
+
       - name: Subir artefactos Linux
         uses: actions/upload-artifact@v4
         with:
           name: linux
           path: |
             src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/deb/*.deb.sig
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
             src-tauri/target/release/bundle/appimage/*.sig

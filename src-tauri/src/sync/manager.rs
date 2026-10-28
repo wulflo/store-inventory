@@ -7,9 +7,9 @@ use crate::sync::net::{
   local_lan_addresses, preferred_lan_ipv4, validate_peer_addr,
 };
 use crate::sync::pairing::{
-  connect_pairing, now_ms, PairQrPayload, PendingPairing, PairingRegistry, PAIRING_PORT,
-  PAIRING_TTL_MS, SYNC_PORT,
+  connect_pairing, now_ms, PairQrPayload, PendingPairing, PairingRegistry, PAIRING_QR_TTL_MS,
 };
+use crate::sync::ports::SyncPorts;
 use crate::sync::peer::{Peer, PeersStore};
 use crate::sync::server::{
   start_pairing_server, start_sync_server, PairingServerHandle, SyncServerHandle,
@@ -56,11 +56,13 @@ pub struct SyncManager {
   app: AppHandle,
   root: String,
   peers_path: PathBuf,
+  ports_path: PathBuf,
+  ports: Mutex<SyncPorts>,
   peers: Arc<Mutex<PeersStore>>,
   identity: Mutex<Option<Identity>>,
   server: Mutex<Option<SyncServerHandle>>,
   pairing_server: Mutex<Option<PairingServerHandle>>,
-  pairing_token: Mutex<Option<String>>,
+  pairing_token: Arc<Mutex<Option<(String, u64)>>>,
   pending: Arc<Mutex<PairingRegistry>>,
   discovery: Mutex<Option<DiscoveryHandle>>,
   discovered: Arc<Mutex<HashMap<String, DiscoveredPeer>>>,
@@ -71,16 +73,20 @@ impl SyncManager {
   pub fn new(app: AppHandle) -> Self {
     let root = Self::resolve_data_root(&app);
     let peers_path = PathBuf::from(&root).join("sync").join("peers.json");
+    let ports_path = PathBuf::from(&root).join("sync").join("ports.json");
+    let ports = SyncPorts::load(&ports_path);
     let peers = PeersStore::load(&peers_path).unwrap_or_else(|_| PeersStore::new());
     Self {
       app,
       root,
       peers_path,
+      ports_path,
+      ports: Mutex::new(ports),
       peers: Arc::new(Mutex::new(peers)),
       identity: Mutex::new(None),
       server: Mutex::new(None),
       pairing_server: Mutex::new(None),
-      pairing_token: Mutex::new(None),
+      pairing_token: Arc::new(Mutex::new(None)),
       pending: Arc::new(Mutex::new(PairingRegistry::new())),
       discovery: Mutex::new(None),
       discovered: Arc::new(Mutex::new(HashMap::new())),
@@ -194,12 +200,17 @@ impl SyncManager {
       .is_some()
   }
 
+  pub fn ports(&self) -> SyncPorts {
+    *self.ports.lock().unwrap_or_else(|e| e.into_inner())
+  }
+
   pub fn local_info(&self) -> SyncLocalInfo {
+    let ports = self.ports();
     SyncLocalInfo {
       identity: self.identity_info(),
       addresses: local_lan_addresses(),
-      sync_port: SYNC_PORT,
-      pairing_port: PAIRING_PORT,
+      sync_port: ports.sync,
+      pairing_port: ports.pairing,
       running: self.is_running(),
       peer_count: self
         .peers
@@ -213,7 +224,9 @@ impl SyncManager {
   pub async fn start(&self, name: &str) -> Result<SyncLocalInfo, String> {
     let identity = self.ensure_identity(name)?;
     if self.is_running() {
+      let _ = self.ensure_pairing_inbox(&identity).await;
       self.ensure_discovery(&identity).await;
+      self.set_discovery_pairing_active(true);
       return Ok(self.info_with_identity(identity));
     }
     let handle = start_sync_server(
@@ -222,6 +235,7 @@ impl SyncManager {
       self.peers_path.clone(),
       self.root.clone(),
       self.app.clone(),
+      self.ports(),
     )
     .await?;
     {
@@ -232,9 +246,112 @@ impl SyncManager {
         *guard = Some(handle);
       }
     }
+    // Mantenemos abierta una "bandeja" de emparejamiento mientras la
+    // sincronización esté activa. Así una solicitud manual de Android no se
+    // pierde si el usuario de escritorio no abrió el QR en ese momento.
+    let _ = self.ensure_pairing_inbox(&identity).await;
     self.ensure_discovery(&identity).await;
+    self.set_discovery_pairing_active(true);
     let _ = self.app.emit("sync-status", self.local_info());
     Ok(self.info_with_identity(identity))
+  }
+
+  /**
+   * Cambia el puerto de sincronización (y el siguiente para emparejamiento).
+   * Si la sincronización está activa, la reinicia con los puertos nuevos.
+   */
+  pub async fn set_ports(&self, name: &str, base: u16) -> Result<SyncLocalInfo, String> {
+    let next = SyncPorts::from_base(base)?;
+    if next == self.ports() {
+      let identity = self.ensure_identity(name)?;
+      return Ok(self.info_with_identity(identity));
+    }
+
+    let _guard = self.sync_lock.lock().await;
+    let previous = self.ports();
+    let was_running = self.is_running();
+
+    if was_running {
+      self.stop();
+    }
+    *self.ports.lock().unwrap_or_else(|e| e.into_inner()) = next;
+
+    if let Err(err) = next.save(&self.ports_path) {
+      *self.ports.lock().unwrap_or_else(|e| e.into_inner()) = previous;
+      if was_running {
+        let _ = self.start(name).await;
+      }
+      return Err(err);
+    }
+
+    if !was_running {
+      let identity = self.ensure_identity(name)?;
+      return Ok(self.info_with_identity(identity));
+    }
+
+    match self.start(name).await {
+      Ok(info) => Ok(info),
+      Err(err) => {
+        // El puerto nuevo no se pudo abrir: restauramos el anterior para no
+        // dejar la app sin sincronización por un cambio fallido.
+        *self.ports.lock().unwrap_or_else(|e| e.into_inner()) = previous;
+        let _ = previous.save(&self.ports_path);
+        let restart = self.start(name).await;
+        let suffix = match restart {
+          Ok(_) => "Se restauraron los puertos anteriores.".to_string(),
+          Err(restore_err) => {
+            format!("Tampoco se pudo reiniciar con los puertos anteriores: {restore_err}")
+          }
+        };
+        Err(format!("{err} {suffix}"))
+      }
+    }
+  }
+
+  /** Abre el listener de emparejamiento si todavía no está activo. */
+  async fn ensure_pairing_inbox(&self, identity: &Identity) -> Result<(), String> {
+    if self
+      .pairing_server
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .is_some()
+    {
+      return Ok(());
+    }
+    match start_pairing_server(
+      identity.clone(),
+      self.ports(),
+      Arc::clone(&self.pending),
+      Arc::clone(&self.pairing_token),
+      self.app.clone(),
+    )
+    .await
+    {
+      Ok(handle) => {
+        *self
+          .pairing_server
+          .lock()
+          .unwrap_or_else(|e| e.into_inner()) = Some(handle);
+        Ok(())
+      }
+      Err(err) => {
+        // La sincronización por IP sigue funcionando aunque el puerto de
+        // emparejamiento esté ocupado.
+        println!("[sync] bandeja de emparejamiento deshabilitada: {err}");
+        Err(err)
+      }
+    }
+  }
+
+  fn set_discovery_pairing_active(&self, active: bool) {
+    if let Some(discovery) = self
+      .discovery
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .as_ref()
+    {
+      discovery.set_pairing_active(active);
+    }
   }
 
   /** Arranca (una sola vez) el anuncio/escucha UDP de descubrimiento. */
@@ -247,12 +364,13 @@ impl SyncManager {
     if already_running {
       return;
     }
+    let ports = self.ports();
     let announce = DiscoveryAnnounce::new(
       identity.name.clone(),
       identity.device_id.clone(),
       identity.fingerprint(),
-      SYNC_PORT,
-      PAIRING_PORT,
+      ports.sync,
+      ports.pairing,
     );
     match start_discovery(
       announce,
@@ -333,6 +451,15 @@ impl SyncManager {
     if let Some(pairing) = pairing {
       pairing.stop();
     }
+    *self
+      .pairing_token
+      .lock()
+      .unwrap_or_else(|e| e.into_inner()) = None;
+    self
+      .pending
+      .lock()
+      .unwrap_or_else(|e| e.into_inner())
+      .clear();
     let discovery = self
       .discovery
       .lock()
@@ -367,47 +494,21 @@ impl SyncManager {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
   }
 
-  /** Abre la ventana de emparejamiento durante 2 minutos y devuelve el token del QR. */
+  /** Abre una ventana de QR y devuelve el token de un solo uso. */
   pub async fn start_pairing(&self, name: &str) -> Result<(SyncLocalInfo, u64, String), String> {
     let identity = self.ensure_identity(name)?;
-    let old = self
-      .pairing_server
-      .lock()
-      .unwrap_or_else(|e| e.into_inner())
-      .take();
-    if let Some(old) = old {
-      old.stop();
-    }
+    self.ensure_pairing_inbox(&identity).await?;
     {
       let mut reg = self.pending.lock().unwrap_or_else(|e| e.into_inner());
       reg.clear();
     }
     let token = Self::new_pairing_token();
+    let expires_at = now_ms() + PAIRING_QR_TTL_MS;
     *self
       .pairing_token
       .lock()
-      .unwrap_or_else(|e| e.into_inner()) = Some(token.clone());
-    let handle = start_pairing_server(
-      identity.clone(),
-      SYNC_PORT,
-      Arc::clone(&self.pending),
-      PAIRING_TTL_MS,
-      Some(token.clone()),
-    )
-    .await?;
-    let expires_at = handle.expires_at;
-    *self
-      .pairing_server
-      .lock()
-      .unwrap_or_else(|e| e.into_inner()) = Some(handle);
-    if let Some(discovery) = self
-      .discovery
-      .lock()
-      .unwrap_or_else(|e| e.into_inner())
-      .as_ref()
-    {
-      discovery.set_pairing_active(true);
-    }
+      .unwrap_or_else(|e| e.into_inner()) = Some((token.clone(), expires_at));
+    self.set_discovery_pairing_active(true);
     Ok((self.info_with_identity(identity), expires_at, token))
   }
 
@@ -442,15 +543,11 @@ impl SyncManager {
     payload.encode()
   }
 
+  /**
+   * Cierra la ventana del QR, pero deja la bandeja de emparejamiento activa
+   * para que sigan llegando solicitudes manuales.
+   */
   pub fn stop_pairing(&self) {
-    let old = self
-      .pairing_server
-      .lock()
-      .unwrap_or_else(|e| e.into_inner())
-      .take();
-    if let Some(old) = old {
-      old.stop();
-    }
     *self
       .pairing_token
       .lock()
@@ -460,14 +557,7 @@ impl SyncManager {
       .lock()
       .unwrap_or_else(|e| e.into_inner())
       .clear();
-    if let Some(discovery) = self
-      .discovery
-      .lock()
-      .unwrap_or_else(|e| e.into_inner())
-      .as_ref()
-    {
-      discovery.set_pairing_active(false);
-    }
+    self.set_discovery_pairing_active(true);
   }
 
   pub fn pending_pairing(&self) -> Option<PendingPairing> {
@@ -497,13 +587,14 @@ impl SyncManager {
   /** Inicia el emparejamiento contra la IP del otro dispositivo (SAS manual). */
   pub async fn connect_pairing(&self, name: &str, address: &str) -> Result<PendingPairing, String> {
     let identity = self.ensure_identity(name)?;
-    let mut addr = validate_peer_addr(address, PAIRING_PORT)?;
-    // Si el usuario pegó la dirección de sincronización (14242), usamos el
-    // puerto de emparejamiento en la misma IP.
-    if addr.port() == SYNC_PORT {
-      addr.set_port(PAIRING_PORT);
+    let ports = self.ports();
+    let mut addr = validate_peer_addr(address, ports.pairing)?;
+    // Si el usuario pegó la dirección de sincronización, usamos el puerto de
+    // emparejamiento en la misma IP.
+    if addr.port() == ports.sync {
+      addr.set_port(ports.pairing);
     }
-    let pending = connect_pairing(&identity, addr, SYNC_PORT, None).await?;
+    let pending = connect_pairing(&identity, addr, ports.sync, None).await?;
     self
       .pending
       .lock()
@@ -519,11 +610,12 @@ impl SyncManager {
   pub async fn connect_pairing_qr(&self, name: &str, payload: &str) -> Result<Peer, String> {
     let qr = PairQrPayload::decode(payload)?;
     let identity = self.ensure_identity(name)?;
-    let mut addr = validate_peer_addr(&qr.addr, PAIRING_PORT)?;
-    if addr.port() == SYNC_PORT {
-      addr.set_port(PAIRING_PORT);
+    let ports = self.ports();
+    let mut addr = validate_peer_addr(&qr.addr, ports.pairing)?;
+    if addr.port() == ports.sync {
+      addr.set_port(ports.pairing);
     }
-    let pending = match connect_pairing(&identity, addr, SYNC_PORT, Some(&qr.token)).await {
+    let pending = match connect_pairing(&identity, addr, ports.sync, Some(&qr.token)).await {
       Ok(pending) => pending,
       Err(first_error) => {
         // Si la IP del QR no responde (por ejemplo, el QR se generó con otra
@@ -536,11 +628,11 @@ impl SyncManager {
           .map(|peer| format!("{}:{}", peer.ip, peer.pairing_port));
         match fallback {
           Some(address) => {
-            let mut alt = validate_peer_addr(&address, PAIRING_PORT)?;
-            if alt.port() == SYNC_PORT {
-              alt.set_port(PAIRING_PORT);
+            let mut alt = validate_peer_addr(&address, ports.pairing)?;
+            if alt.port() == ports.sync {
+              alt.set_port(ports.pairing);
             }
-            connect_pairing(&identity, alt, SYNC_PORT, Some(&qr.token))
+            connect_pairing(&identity, alt, ports.sync, Some(&qr.token))
               .await
               .map_err(|e| format!("{first_error}. Reintento por LAN: {e}"))?
           }
@@ -592,7 +684,8 @@ impl SyncManager {
       store.add_or_update(peer.clone());
       store.persist(&self.peers_path)?;
     }
-    // Emparejamiento completado: liberamos la ventana/listener temporal.
+    // Emparejamiento completado: cerramos la ventana del QR, pero la bandeja
+    // de emparejamiento sigue escuchando para futuras solicitudes.
     self.stop_pairing();
     let _ = self.app.emit("sync-peers-updated", self.list_peers());
     Ok(peer)
@@ -613,7 +706,7 @@ impl SyncManager {
   ) -> Result<Peer, String> {
     let normalized = match address {
       Some(text) if !text.trim().is_empty() => {
-        Some(validate_peer_addr(text, SYNC_PORT)?.to_string())
+        Some(validate_peer_addr(text, self.ports().sync)?.to_string())
       }
       _ => None,
     };
@@ -673,11 +766,12 @@ impl SyncManager {
     }
 
     let _guard = self.sync_lock.lock().await;
+    let sync_port = self.ports().sync;
     let mut last_error = String::from("No se pudo conectar con el dispositivo.");
     let mut report: Option<SyncReport> = None;
     let mut used_address = String::new();
     for address_text in candidates {
-      let addr = match validate_peer_addr(&address_text, SYNC_PORT) {
+      let addr = match validate_peer_addr(&address_text, sync_port) {
         Ok(addr) => addr,
         Err(err) => {
           last_error = err;
@@ -767,10 +861,11 @@ impl SyncManager {
       );
     }
 
+    let pairing_port = self.ports().pairing;
     let mut tasks = JoinSet::new();
     for ip in targets {
       tasks.spawn(async move {
-        let addr = SocketAddr::from((ip, PAIRING_PORT));
+        let addr = SocketAddr::from((ip, pairing_port));
         match tokio::time::timeout(Duration::from_millis(220), TcpStream::connect(addr)).await {
           Ok(Ok(_)) => Some(ip.to_string()),
           _ => None,

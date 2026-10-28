@@ -148,6 +148,16 @@ async function boot(): Promise<void> {
         new CustomEvent('inventario:sync-pairing-completed', { detail: event.payload }),
       );
     });
+    await listen('sync-pairing-request', (event) => {
+      const pending = event.payload as { name?: string } | null;
+      window.dispatchEvent(
+        new CustomEvent('inventario:sync-pairing-request', { detail: event.payload }),
+      );
+      toast(
+        `Solicitud de emparejamiento de ${pending?.name ?? 'un dispositivo'}. Abrí Ajustes › Sincronización para confirmar el código.`,
+        { kind: 'warning', duration: 8000 },
+      );
+    });
 
     // Auto-sync
     try {

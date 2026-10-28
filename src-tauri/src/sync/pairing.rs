@@ -18,9 +18,12 @@ use tokio_rustls::TlsAcceptor;
 /* Emparejamiento con confirmación SAS                                 */
 /* ------------------------------------------------------------------ */
 
-pub const SYNC_PORT: u16 = 14242;
-pub const PAIRING_PORT: u16 = 14243;
-pub const PAIRING_TTL_MS: u64 = 120_000;
+pub const PAIRING_PORT: u16 = crate::sync::ports::DEFAULT_PAIRING_PORT;
+/// Tiempo que una solicitud pendiente espera confirmación SAS.
+pub const PAIRING_TTL_MS: u64 = 300_000;
+/// Vigencia del token de un QR. Pasado ese tiempo, la conexión sigue siendo
+/// válida pero requiere confirmación manual del SAS.
+pub const PAIRING_QR_TTL_MS: u64 = 120_000;
 
 pub fn now_ms() -> u64 {
   SystemTime::now()
@@ -343,6 +346,7 @@ mod tests {
 #[cfg(test)]
 mod handshake_tests {
   use super::*;
+  use crate::sync::ports::DEFAULT_SYNC_PORT as SYNC_PORT;
   use crate::sync::tls;
 
   #[tokio::test]

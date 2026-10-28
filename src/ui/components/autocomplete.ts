@@ -84,7 +84,7 @@ export function autocomplete<T>(options: AutocompleteOptions<T>): AutocompleteHa
     list.replaceChildren();
 
     if (items.length === 0) {
-      if (options.allowCustom?.(input.value)) {
+      if (input.value.trim() && options.allowCustom?.(input.value)) {
         list.appendChild(
           el(
             'div',
@@ -133,7 +133,7 @@ export function autocomplete<T>(options: AutocompleteOptions<T>): AutocompleteHa
       list.appendChild(node);
     });
 
-    if (options.allowCustom?.(input.value)) {
+    if (input.value.trim() && options.allowCustom?.(input.value)) {
       list.appendChild(
         el(
           'div',
@@ -157,7 +157,9 @@ export function autocomplete<T>(options: AutocompleteOptions<T>): AutocompleteHa
 
   function refresh(): void {
     const q = input.value.trim();
-    items = q ? options.getItems(q) : [];
+    // Al enfocar vacío mostramos las primeras opciones; así el buscador es
+    // usable sin tener que adivinar el primer carácter.
+    items = options.getItems(q);
     highlighted = -1;
     renderList();
   }

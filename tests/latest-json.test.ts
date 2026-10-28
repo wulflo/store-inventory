@@ -24,6 +24,7 @@ afterEach(() => {
 
 describe('latest-json', () => {
   it('reconoce las plataformas del updater', () => {
+    expect(platformFor('app_1.0.0_amd64.deb')).toBe('linux-x86_64-deb');
     expect(platformFor('app_1.0.0_amd64.AppImage.tar.gz')).toBe('linux-x86_64');
     expect(platformFor('app_1.0.0_amd64.AppImage')).toBe('linux-x86_64');
     expect(platformFor('app_1.0.0_x64-setup.nsis.zip')).toBe('windows-x86_64');
@@ -146,6 +147,26 @@ describe('latest-json', () => {
     });
 
     expect(json.platforms['windows-x86_64'].signature).toBe(b64('nsis'));
+  });
+
+  it('incluye el .deb firmado para el instalador manual de Linux', () => {
+    const dir = makeArtifacts({
+      'Inventario Tienda_1.0.0_amd64.deb': 'deb',
+      'Inventario Tienda_1.0.0_amd64.deb.sig': 'firma-deb',
+      'app_1.0.0_amd64.AppImage.sig': 'firma-appimage',
+    });
+
+    const json = buildLatestJson({
+      version: '1.0.0',
+      tag: 'v1.0.0',
+      repo: 'owner/repo',
+      artifactsDir: dir,
+    });
+
+    expect(json.platforms['linux-x86_64-deb']).toEqual({
+      signature: b64('firma-deb'),
+      url: 'https://github.com/owner/repo/releases/download/v1.0.0/Inventario.Tienda_1.0.0_amd64.deb',
+    });
   });
 
   it('incluye el APK universal de Android', () => {

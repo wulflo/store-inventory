@@ -20,6 +20,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::keys;
 
@@ -27,10 +28,19 @@ use crate::keys;
 /* Clave en memoria                                                    */
 /* ------------------------------------------------------------------ */
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct KeyMaterial {
   pub key: [u8; 32],
   pub kid: String,
+}
+
+impl std::fmt::Debug for KeyMaterial {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("KeyMaterial")
+      .field("key", &"[REDACTED]")
+      .field("kid", &self.kid)
+      .finish()
+  }
 }
 
 /// Error reconocible por el frontend para pedir el desbloqueo.
@@ -588,7 +598,7 @@ pub fn crypto_boot_state(root: String) -> Result<BootState, String> {
     enabled: keyring.is_some(),
     unlocked: km.is_some(),
     kid: km
-      .map(|k| k.kid)
+      .map(|k| k.kid.clone())
       .or_else(|| keyring.map(|k| k.kid)),
   })
 }
@@ -670,7 +680,7 @@ pub fn crypto_enable(root: String, password: String) -> Result<EnableResult, Str
 
   Ok(EnableResult {
     recovery_code: created.recovery_code,
-    kid: km.kid,
+    kid: km.kid.clone(),
     report: MigrationReport {
       files,
       events,
@@ -805,7 +815,7 @@ pub fn crypto_rotate(
 
   Ok(RotateResult {
     recovery_code: fresh.recovery_code,
-    kid: new_km.kid,
+    kid: new_km.kid.clone(),
     report: MigrationReport {
       files,
       events,
@@ -814,9 +824,20 @@ pub fn crypto_rotate(
   })
 }
 
+/// Los comandos de diagnóstico solo existen en builds de desarrollo. En una
+/// release no queremos exponer un oráculo de cifrado/descifrado por IPC.
+fn ensure_diagnostics_enabled() -> Result<(), String> {
+  if cfg!(debug_assertions) {
+    Ok(())
+  } else {
+    Err("Los comandos de diagnóstico criptográfico están deshabilitados en producción.".to_string())
+  }
+}
+
 /// Diagnóstico: cifra un texto con la clave actual y devuelve `ciphertext:nonce`.
 #[tauri::command]
 pub fn crypto_encrypt_text(root: String, plaintext: String) -> Result<String, String> {
+  ensure_diagnostics_enabled()?;
   let km = current_key(&root).ok_or_else(|| locked_error())?;
   let (ciphertext, nonce) = encrypt_payload(&Value::String(plaintext), &km.key, b"")?;
   Ok(format!("{ciphertext}:{nonce}"))
@@ -825,6 +846,7 @@ pub fn crypto_encrypt_text(root: String, plaintext: String) -> Result<String, St
 /// Diagnóstico: descifra el formato `ciphertext:nonce`.
 #[tauri::command]
 pub fn crypto_decrypt_text(root: String, encrypted: String) -> Result<String, String> {
+  ensure_diagnostics_enabled()?;
   let km = current_key(&root).ok_or_else(|| locked_error())?;
   let (ciphertext, nonce) = encrypted
     .split_once(':')
@@ -839,6 +861,7 @@ pub fn crypto_decrypt_text(root: String, encrypted: String) -> Result<String, St
 /// Flujo Write de diagnóstico: cifra y hace append al JSONL del dominio.
 #[tauri::command]
 pub fn crypto_append_event(root: String, domain: String, event_json: String) -> Result<(), String> {
+  ensure_diagnostics_enabled()?;
   let km = resolve_key(&root)?.ok_or_else(|| {
     "El cifrado no está activado. Activá el cifrado en Ajustes.".to_string()
   })?;
@@ -848,6 +871,7 @@ pub fn crypto_append_event(root: String, domain: String, event_json: String) -> 
 /// Flujo Read de diagnóstico: lee y descifra el JSONL del dominio.
 #[tauri::command]
 pub fn crypto_read_events(root: String, domain: String) -> Result<String, String> {
+  ensure_diagnostics_enabled()?;
   read_events_decrypted(&root, &domain)
 }
 
@@ -896,7 +920,7 @@ pub fn crypto_import_keyring(
 
     if jsonl_files(&root)?.is_empty() {
       keys::save(&root, &keyring)?;
-      set_current(&root, km.key, km.kid);
+      set_current(&root, km.key, km.kid.clone());
       return Ok(MigrationReport {
         files: 0,
         events: 0,

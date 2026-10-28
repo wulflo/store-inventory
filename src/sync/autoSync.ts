@@ -28,6 +28,8 @@ let config: SyncAutoConfig = { enabled: false, respect_battery_saver: true };
 let battery: BatteryStatus = { power_save_mode: false, battery_level: 100, is_charging: true, effective_mode: 'normal' };
 let debounceTimer: number | null = null;
 let periodicTimer: number | null = null;
+let retryTimer: number | null = null;
+let pendingReason: string | null = null;
 let isSyncing = false;
 let lastSyncAt = 0;
 let consecutiveFailures = 0;
@@ -90,16 +92,22 @@ export async function refreshBattery(): Promise<void> {
 
 export function scheduleSync(reason: string): void {
   if (!autoSyncEnabled) return;
-  if (isSyncing) return;
+  if (isSyncing) {
+    // No perdemos el cambio: lo reprogramamos al terminar el sync en curso.
+    pendingReason = reason;
+    return;
+  }
   const now = Date.now();
-  if (now - lastSyncAt < MIN_SYNC_INTERVAL_MS) return;
+  const sinceLastSync = now - lastSyncAt;
+  const wait = Math.max(getDebounceMs(), MIN_SYNC_INTERVAL_MS - sinceLastSync);
 
   if (debounceTimer !== null) {
     clearTimeout(debounceTimer);
   }
   debounceTimer = window.setTimeout(() => {
+    debounceTimer = null;
     void runAutoSync(reason);
-  }, getDebounceMs());
+  }, wait);
 }
 
 export async function runAutoSync(reason: string): Promise<void> {
@@ -109,6 +117,10 @@ export async function runAutoSync(reason: string): Promise<void> {
   if (mode === 'ahorro' && reason === 'periodic') return;
 
   isSyncing = true;
+  if (retryTimer !== null) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     // Sync all peers
@@ -120,9 +132,20 @@ export async function runAutoSync(reason: string): Promise<void> {
     consecutiveFailures++;
     const backoff = Math.min(BACKOFF_BASE_MS * Math.pow(2, consecutiveFailures), BACKOFF_MAX_MS);
     console.warn(`Auto-sync (${reason}) falló, reintento en ${backoff}ms`, e);
-    setTimeout(() => scheduleSync('retry'), backoff);
+    // Reintento directo: no pasa por scheduleSync(), que podría descartarlo
+    // por el intervalo mínimo o por un debounce pendiente.
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      void runAutoSync('retry');
+    }, backoff);
   } finally {
     isSyncing = false;
+    if (pendingReason !== null) {
+      const reason = pendingReason;
+      pendingReason = null;
+      scheduleSync(reason);
+    }
   }
 }
 
@@ -142,6 +165,11 @@ export function stopAutoSync(): void {
     clearTimeout(debounceTimer);
     debounceTimer = null;
   }
+  if (retryTimer !== null) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  pendingReason = null;
   if (periodicTimer !== null) {
     clearInterval(periodicTimer);
     periodicTimer = null;

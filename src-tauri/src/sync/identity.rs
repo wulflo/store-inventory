@@ -26,6 +26,36 @@ pub struct Identity {
   pub name: String,
 }
 
+#[cfg(unix)]
+fn restrict_dir_permissions(dir: &Path) -> Result<(), String> {
+  use std::os::unix::fs::PermissionsExt;
+  if dir.exists() {
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+      .map_err(|e| format!("No se pudieron restringir los permisos de la carpeta de identidad: {e}"))?;
+  }
+  Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_dir_permissions(_dir: &Path) -> Result<(), String> {
+  Ok(())
+}
+
+#[cfg(unix)]
+fn restrict_file_permissions(path: &Path) -> Result<(), String> {
+  use std::os::unix::fs::PermissionsExt;
+  if path.exists() {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+      .map_err(|e| format!("No se pudieron restringir los permisos de la clave privada: {e}"))?;
+  }
+  Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_file_permissions(_path: &Path) -> Result<(), String> {
+  Ok(())
+}
+
 impl Identity {
   /** Genera una nueva identidad autofirmada. */
   pub fn generate(name: &str) -> Result<Self, String> {
@@ -62,8 +92,10 @@ impl Identity {
   /** Persiste identidad en disco (clave privada + certificado). */
   pub fn persist(&self, dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("No se pudo crear la carpeta de identidad: {e}"))?;
+    restrict_dir_permissions(dir)?;
     fs::write(dir.join("identity.pem"), self.key_pem())
       .map_err(|e| format!("No se pudo escribir la clave privada: {e}"))?;
+    restrict_file_permissions(&dir.join("identity.pem"))?;
     fs::write(dir.join("certificate.pem"), self.cert_pem())
       .map_err(|e| format!("No se pudo escribir el certificado: {e}"))?;
     if !self.name.trim().is_empty() {
@@ -75,6 +107,10 @@ impl Identity {
 
   /** Carga identidad desde disco. */
   pub fn load(dir: &Path, name: &str) -> Result<Self, String> {
+    // Si una versión anterior dejó la clave legible por otros usuarios,
+    // la corregimos antes de leerla.
+    restrict_dir_permissions(dir)?;
+    restrict_file_permissions(&dir.join("identity.pem"))?;
     let key_pair_pem = fs::read_to_string(dir.join("identity.pem"))
       .map_err(|e| format!("No se pudo leer la clave privada: {e}"))?;
     let cert_pem = fs::read_to_string(dir.join("certificate.pem"))

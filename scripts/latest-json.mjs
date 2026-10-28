@@ -43,6 +43,9 @@ export function walkFiles(dir) {
  * Aceptamos ambos formatos para no romper si cambia la configuración.
  */
 export function updaterArtifact(fileName) {
+  // .deb firmado: lo usa el instalador manual de Linux cuando la app no corre
+  // como AppImage. Va en una clave propia para no pisar la firma del AppImage.
+  if (fileName.endsWith('.deb')) return { platform: 'linux-x86_64-deb', rank: 1 };
   if (fileName.endsWith('.AppImage')) return { platform: 'linux-x86_64', rank: 2 };
   if (fileName.endsWith('.AppImage.tar.gz')) return { platform: 'linux-x86_64', rank: 1 };
 

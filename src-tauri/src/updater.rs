@@ -10,6 +10,7 @@ use tauri::AppHandle;
 
 const UPDATE_ENDPOINT: &str =
   "https://github.com/wulflo/store-inventory/releases/latest/download/latest.json";
+const RELEASES_URL: &str = "https://github.com/wulflo/store-inventory/releases/latest";
 const UPDATE_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU3M0I4RDQ3N0IwODJEN0YKUldSL0xRaDdSNDA3NTZUZEhkMXJHL1JrV0l3czFIWkxHLzNPejJmaEpmY0Q1NWVmd2lxT1ZVd0YK";
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,7 +53,9 @@ fn parse_version(text: &str) -> Option<semver::Version> {
 fn is_newer(remote: &str, current: &str) -> bool {
   match (parse_version(remote), parse_version(current)) {
     (Some(remote), Some(current)) => remote > current,
-    _ => remote.trim() != current.trim(),
+    // Si alguna versión no es semver, no arriesgamos una actualización:
+    // preferimos no descargar nada antes que comparar strings arbitrarios.
+    _ => false,
   }
 }
 
@@ -139,10 +142,17 @@ async fn fetch_manifest() -> Result<ReleaseManifest, String> {
       response.status()
     ));
   }
-  response
+  let manifest = response
     .json::<ReleaseManifest>()
     .await
-    .map_err(|e| format!("Respuesta de actualizaciones inválida: {e}"))
+    .map_err(|e| format!("Respuesta de actualizaciones inválida: {e}"))?;
+  if parse_version(&manifest.version).is_none() {
+    return Err(format!(
+      "El manifiesto tiene una versión inválida: {}",
+      manifest.version
+    ));
+  }
+  Ok(manifest)
 }
 
 async fn download_release_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>, String> {
@@ -251,15 +261,28 @@ fn pick_desktop_platform<'a>(
 
 #[cfg(not(target_os = "android"))]
 fn release_file_name(url: &str) -> String {
-  url
+  let raw = url
     .split('?')
     .next()
     .unwrap_or(url)
     .rsplit('/')
     .next()
-    .filter(|name| !name.is_empty())
-    .unwrap_or("inventario-tienda-update")
-    .to_string()
+    .unwrap_or("inventario-tienda-update");
+  let sanitized: String = raw
+    .chars()
+    .map(|c| {
+      if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+        c
+      } else {
+        '_'
+      }
+    })
+    .collect();
+  if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
+    "inventario-tienda-update".to_string()
+  } else {
+    sanitized
+  }
 }
 
 #[cfg(not(target_os = "android"))]
@@ -273,22 +296,25 @@ async fn desktop_manual_install(app: &AppHandle) -> Result<String, String> {
 
   // En Linux, si la app no corre como AppImage, probablemente se instaló con
   // el .deb. El plugin updater solo puede reemplazar AppImages, así que
-  // descargamos el .deb del release.
+  // descargamos el .deb del release… pero SOLO si viene con firma propia.
   let use_deb = cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_none();
-  let (url, file_name, verify) = if use_deb {
-    (
+  let (url, file_name, signature) = if use_deb {
+    let deb = manifest.platforms.get("linux-x86_64-deb").ok_or_else(|| {
       format!(
-        "https://github.com/wulflo/store-inventory/releases/download/v{}/Inventario.Tienda_{}_amd64.deb",
-        manifest.version, manifest.version
-      ),
-      format!("Inventario.Tienda_{}_amd64.deb", manifest.version),
-      false,
+        "Esta versión no publicó un .deb firmado para el actualizador. \
+         Descargalo manualmente desde {RELEASES_URL}"
+      )
+    })?;
+    (
+      deb.url.clone(),
+      release_file_name(&deb.url),
+      deb.signature.clone(),
     )
   } else {
     (
       platform.url.clone(),
       release_file_name(&platform.url),
-      true,
+      platform.signature.clone(),
     )
   };
 
@@ -296,9 +322,8 @@ async fn desktop_manual_install(app: &AppHandle) -> Result<String, String> {
   if bytes.len() < 1024 {
     return Err("El instalador descargado está vacío o incompleto.".into());
   }
-  if verify {
-    verify_release_signature(&bytes, &platform.signature)?;
-  }
+  // Nunca instalamos un artefacto sin verificar su firma minisign.
+  verify_release_signature(&bytes, &signature)?;
 
   let downloads = app
     .path()

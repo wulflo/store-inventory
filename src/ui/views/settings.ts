@@ -322,6 +322,13 @@ function kindLabel(kind: string): string {
 /* ------------------------------------------------------------------ */
 
 async function exportBackup(app: App): Promise<void> {
+  const ok = await confirmDialog({
+    title: 'Exportar copia de seguridad',
+    message:
+      'El archivo contiene todos los eventos de la tienda. Guardalo en un lugar privado y no lo compartas: si el cifrado está desactivado, los datos pueden leerse en texto plano.',
+    confirmLabel: 'Exportar',
+  });
+  if (!ok) return;
   try {
     const bundle = await app.store.exportAll();
     const json = JSON.stringify(bundle, null, 2);

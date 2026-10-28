@@ -278,6 +278,31 @@ describe('change log / proyección', () => {
     expect(maxHlc).toBeGreaterThan(1);
   });
 
+  it('un evento cifrado que no se pudo descifrar no contamina el stock', async () => {
+    const { app, bySize } = await makeApp();
+    const variantId = bySize.get('M')!;
+    await setInitialStock(app, variantId, 7);
+
+    const before = app.state.stock.get(variantId)!.totalQty;
+    app.projector.apply({
+      id: 'evento-cifrado-ilegible',
+      type: 'Stock.Movement',
+      payload: {
+        _encrypted: true,
+        _error: 'otra clave',
+        kid: 'kid-ajeno',
+        alg: 'XChaCha20-Poly1305',
+        data: '...',
+        nonce: '...',
+      },
+      metadata: { hlc: 999_999, deviceId: 'otro', timestamp: 999_999, version: 1 },
+    });
+
+    expect(app.state.stock.get(variantId)!.totalQty).toBe(before);
+    expect(Number.isNaN(app.state.stock.get(variantId)!.availableQty)).toBe(false);
+    expect(app.state.appliedEventIds.has('evento-cifrado-ilegible')).toBe(false);
+  });
+
   it('reconstruir el estado desde el log da el mismo resultado', async () => {
     const { app, store, bySize } = await makeApp();
     const variantId = bySize.get('M')!;

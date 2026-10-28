@@ -26,20 +26,20 @@ export interface Accent {
 export const ACCENTS: readonly Accent[] = [
   {
     id: 'blue',
-    label: 'Azul',
+    label: 'Celeste',
     light: {
-      primary: '#2f6df6',
+      primary: '#0369a1',
       onPrimary: '#ffffff',
-      primaryContainer: '#e7efff',
-      onPrimaryContainer: '#1a4aa3',
-      hover: '#1f5ad9',
+      primaryContainer: '#e0f2fe',
+      onPrimaryContainer: '#075985',
+      hover: '#075985',
     },
     dark: {
-      primary: '#8c9dff',
-      onPrimary: '#303f67',
-      primaryContainer: '#303f67',
-      onPrimaryContainer: '#e7efff',
-      hover: '#a3b4ff',
+      primary: '#4fc3f7',
+      onPrimary: '#00344d',
+      primaryContainer: '#0b3a52',
+      onPrimaryContainer: '#c9ecff',
+      hover: '#81d4fa',
     },
   },
   {

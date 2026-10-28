@@ -1,4 +1,4 @@
-import { el, icon } from '../dom';
+import { el, icon, matches } from '../dom';
 import { autocomplete } from '../components/autocomplete';
 import { card, emptyState, money, statusBadge } from './common';
 import type { Shell } from '../app';
@@ -32,7 +32,6 @@ export function newOrderView(app: App, shell: Shell): HTMLElement {
   const customerInput = autocomplete<Customer>({
     placeholder: 'Buscar cliente por nombre o teléfono…',
     getItems: (q) => {
-      const needle = q.toLowerCase();
       const frequency = new Map<string, number>();
       for (const order of app.state.orders.values()) {
         if (order.deletedAt || order.status === 'cancelado') continue;
@@ -40,12 +39,7 @@ export function newOrderView(app: App, shell: Shell): HTMLElement {
       }
       return [...app.state.customers.values()]
         .filter((c) => !c.deletedAt)
-        .filter(
-          (c) =>
-            c.name.toLowerCase().includes(needle) ||
-            (c.phone ?? '').includes(needle) ||
-            (c.email ?? '').toLowerCase().includes(needle),
-        )
+        .filter((c) => matches(`${c.name} ${c.phone ?? ''} ${c.email ?? ''}`, q))
         .sort((a, b) => {
           const byFrequency = (frequency.get(b.id) ?? 0) - (frequency.get(a.id) ?? 0);
           if (byFrequency !== 0) return byFrequency;
@@ -133,14 +127,13 @@ export function newOrderView(app: App, shell: Shell): HTMLElement {
   const productInput = autocomplete<Product>({
     placeholder: 'Buscar producto por nombre o SKU…',
     getItems: (q) => {
-      const needle = q.toLowerCase();
       return [...app.state.products.values()]
         .filter((p) => !p.deletedAt && p.isActive)
-        .filter(
-          (p) =>
-            p.name.toLowerCase().includes(needle) ||
-            p.sku.toLowerCase().includes(needle) ||
-            (app.state.collections.get(p.collectionId)?.name ?? '').toLowerCase().includes(needle),
+        .filter((p) =>
+          matches(
+            `${p.name} ${p.sku} ${app.state.collections.get(p.collectionId)?.name ?? ''}`,
+            q,
+          ),
         )
         .slice(0, 8);
     },

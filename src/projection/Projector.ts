@@ -45,12 +45,23 @@ export class Projector {
   constructor(public readonly state: AppState) {}
 
   apply(event: DomainEvent): void {
+    if (!event || typeof event.id !== 'string') return;
     // Idempotencia: un evento nunca se aplica dos veces.
     if (this.state.appliedEventIds.has(event.id)) return;
-    this.state.appliedEventIds.add(event.id);
 
     const { type, payload, metadata } = event;
-    const hlc = metadata.hlc;
+    // Un HLC inválido (NaN/Infinity/ausente) envenenaría `lastHlc` y todos los
+    // LWW posteriores. Descartamos el evento antes de marcarlo como aplicado.
+    const hlc = Number(metadata?.hlc);
+    if (!Number.isFinite(hlc) || hlc < 0) return;
+    if (!payload || typeof payload !== 'object') return;
+    // Un evento cifrado que no pudimos descifrar llega con
+    // `{ _encrypted: true, _error, ... }`. No es un payload de dominio: si lo
+    // aplicáramos, `quantity`/`variantId` serían undefined y el stock pasaría
+    // a NaN. Lo descartamos sin marcarlo como aplicado.
+    if ((payload as { _encrypted?: unknown })._encrypted === true) return;
+
+    this.state.appliedEventIds.add(event.id);
     this.currentMeta = metadata;
 
     switch (type) {

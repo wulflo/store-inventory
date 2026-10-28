@@ -92,6 +92,7 @@ export function settingsSyncCard(app: App): HTMLElement {
   let busy = false;
   let listening = false;
   let addressDraft = '';
+  let portDraft = '';
   let pollTimer: number | null = null;
   let message = '';
   let qrDataUrl = '';
@@ -132,20 +133,31 @@ export function settingsSyncCard(app: App): HTMLElement {
       discovered = [];
     }
     listening = Boolean(pending) || listening;
+    if (!portDraft) {
+      portDraft = String(info?.sync_port ?? 14242);
+    }
+    // Mantenemos la escucha de solicitudes mientras la sincronización esté
+    // activa, aunque el usuario no haya abierto la ventana del QR.
+    if (info?.running || pending) {
+      startPolling();
+    }
   }
 
   async function refreshPending(): Promise<void> {
     if (!isTauri() || busy) return;
     try {
-      pending = await invoke<PendingPairing | null>('sync_pair_pending');
+      const next = await invoke<PendingPairing | null>('sync_pair_pending');
+      const changed = (next?.device_id ?? null) !== (pending?.device_id ?? null);
+      pending = next;
       if (pending) {
         listening = false;
-        stopPolling();
-      } else if (info?.running === false) {
-        listening = false;
+      }
+      if (info?.running === false) {
         stopPolling();
       }
-      render();
+      // No re-renderizamos en cada tick: eso borraría el foco mientras el
+      // usuario escribe una IP o un nombre.
+      if (changed) render();
     } catch (err) {
       stopPolling();
       showError(err);
@@ -203,6 +215,44 @@ export function settingsSyncCard(app: App): HTMLElement {
     }
   }
 
+  async function savePorts(raw: string): Promise<void> {
+    const base = Number(raw);
+    if (!Number.isInteger(base) || base < 1024 || base > 65534) {
+      showError(new Error('El puerto debe ser un número entero entre 1024 y 65534.'));
+      return;
+    }
+    if (info?.sync_port === base) {
+      message = 'El puerto no cambió.';
+      render();
+      return;
+    }
+    setBusy(true);
+    message = '';
+    try {
+      info = await invoke<SyncLocalInfo>('sync_set_ports', {
+        name: localName(app),
+        basePort: base,
+      });
+      portDraft = String(info.sync_port);
+      message = info.running
+        ? `Puertos aplicados: sincronización ${info.sync_port}, emparejamiento ${info.pairing_port}.`
+        : `Puertos guardados: sincronización ${info.sync_port}, emparejamiento ${info.pairing_port}.`;
+      await load();
+    } catch (err) {
+      showError(err);
+      // Si el puerto estaba ocupado, el backend vuelve a los anteriores.
+      // Reflejamos el puerto real en el campo para no dejar un valor engañoso.
+      try {
+        await load();
+      } catch {
+        // Conservamos la información anterior si el refresco también falla.
+      }
+      portDraft = String(info?.sync_port ?? portDraft);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function startListen(): Promise<void> {
     if (!(await ensureServer())) return;
     setBusy(true);
@@ -234,7 +284,7 @@ export function settingsSyncCard(app: App): HTMLElement {
     listening = false;
     pending = null;
     qrDataUrl = '';
-    stopPolling();
+    if (!info?.running) stopPolling();
     message = '';
     render();
   }
@@ -254,7 +304,9 @@ export function settingsSyncCard(app: App): HTMLElement {
         address: clean,
       });
       listening = false;
-      message = '';
+      message =
+        'Solicitud enviada. Compará el código de 6 dígitos y confirmalo también en el otro dispositivo.';
+      startPolling();
     } catch (err) {
       pending = null;
       showError(err);
@@ -299,6 +351,10 @@ export function settingsSyncCard(app: App): HTMLElement {
       message = `${peer.name} quedó emparejado.`;
       toastSuccess('Dispositivo emparejado.');
       await load();
+      // Primer intercambio apenas ambos lados confirmaron.
+      void invoke('sync_now', {}).catch(() => {
+        /* el auto-sync lo reintenta */
+      });
     } catch (err) {
       showError(err);
     } finally {
@@ -339,6 +395,9 @@ export function settingsSyncCard(app: App): HTMLElement {
       message = `${peer.name} quedó emparejado.`;
       toastSuccess('Dispositivo emparejado.');
       await load();
+      void invoke('sync_now', {}).catch(() => {
+        /* el auto-sync lo reintenta */
+      });
     } catch (err) {
       showError(err);
       message = '';
@@ -551,7 +610,7 @@ export function settingsSyncCard(app: App): HTMLElement {
       input,
       el('p', {
         class: 'small muted mt-3',
-        text: 'Se usa el puerto de sincronización 14242. La IP puede cambiar si el router asigna otra.',
+        text: `Se usa el puerto de sincronización ${info?.sync_port ?? 14242}. La IP puede cambiar si el router asigna otra.`,
       }),
     );
     const modal = openModal({
@@ -611,6 +670,30 @@ export function settingsSyncCard(app: App): HTMLElement {
     void load().then(render).catch(() => {});
   };
   window.addEventListener('inventario:sync-updated', onSyncUpdated);
+
+  const onPeersUpdated = (): void => {
+    if (!isTauri() || busy) return;
+    void load().then(render).catch(() => {});
+  };
+  window.addEventListener('inventario:sync-peers-updated', onPeersUpdated);
+
+  const onPairingCompleted = (event: Event): void => {
+    const detail = (event as CustomEvent).detail as Peer | undefined;
+    if (detail?.name) message = `${detail.name} quedó emparejado.`;
+    toastSuccess('Dispositivo emparejado.');
+    pending = null;
+    void load().then(render).catch(() => {});
+    void invoke('sync_now', {}).catch(() => {
+      /* el auto-sync lo reintenta */
+    });
+  };
+  window.addEventListener('inventario:sync-pairing-completed', onPairingCompleted);
+
+  const onPairingRequest = (): void => {
+    if (!isTauri() || busy) return;
+    void refreshPending();
+  };
+  window.addEventListener('inventario:sync-pairing-request', onPairingRequest);
 
   const onDiscovery = (event: Event): void => {
     const detail = (event as CustomEvent).detail;
@@ -674,7 +757,7 @@ export function settingsSyncCard(app: App): HTMLElement {
       el('div', { class: 'sync-sas', text: formatSas(pending.sas) }),
       el('p', {
         class: 'small',
-        text: `Compará este código con el que muestra “${pending.name}”. Deben ser idénticos.`,
+        text: `Compará este código con el que muestra “${pending.name}”. Deben ser idénticos y tenés que confirmar en ambos dispositivos.`,
       }),
       el(
         'div',
@@ -699,6 +782,54 @@ export function settingsSyncCard(app: App): HTMLElement {
           on: { click: () => void cancelPairing() },
         }),
       ),
+    );
+  }
+
+  function portsBlock(): HTMLElement {
+    const input = el('input', {
+      type: 'number',
+      min: '1024',
+      max: '65534',
+      step: '1',
+      value: portDraft,
+      inputmode: 'numeric',
+      autocomplete: 'off',
+      'aria-label': 'Puerto de sincronización',
+      on: {
+        input: () => {
+          portDraft = input.value;
+        },
+      },
+    });
+    const syncPort = info?.sync_port ?? 14242;
+    const pairingPort = info?.pairing_port ?? 14243;
+    return el(
+      'div',
+      { class: 'field' },
+      el('label', { text: 'Puerto de red' }),
+      el(
+        'p',
+        {
+          class: 'small muted',
+          text: `Sincronización ${syncPort} · Emparejamiento ${pairingPort}. Si cambiás el puerto, el emparejamiento usa el siguiente.`,
+        },
+      ),
+      el(
+        'div',
+        { class: 'sync-inline' },
+        input,
+        el('button', {
+          class: 'btn btn-sm',
+          type: 'button',
+          disabled: busy,
+          text: 'Aplicar',
+          on: { click: () => void savePorts(input.value) },
+        }),
+      ),
+      el('p', {
+        class: 'xsmall dim',
+        text: 'Permití ese puerto TCP y el siguiente en el firewall. El descubrimiento usa UDP 14244 y no cambia.',
+      }),
     );
   }
 
@@ -1020,10 +1151,17 @@ export function settingsSyncCard(app: App): HTMLElement {
         }),
       ),
       current ? identityBlock(current) : null,
+      portsBlock(),
       el('p', {
         class: 'small muted',
         text: 'Los datos viajan cifrados con TLS mutuo y certificados fijados. Nada sale de tu red local.',
       }),
+      info?.running
+        ? el('p', {
+            class: 'small muted',
+            text: 'Con la sincronización activa, las solicitudes de emparejamiento aparecen acá automáticamente; no hace falta abrir el QR.',
+          })
+        : null,
       el('div', { class: 'sync-divider' }),
       pending ? pendingBlock() : listening ? listeningBlock() : pairingIdleBlock(),
       discoveredBlock(),
@@ -1070,6 +1208,9 @@ export function settingsSyncCard(app: App): HTMLElement {
       stopPolling();
       observer.disconnect();
       window.removeEventListener('inventario:sync-updated', onSyncUpdated);
+      window.removeEventListener('inventario:sync-peers-updated', onPeersUpdated);
+      window.removeEventListener('inventario:sync-pairing-completed', onPairingCompleted);
+      window.removeEventListener('inventario:sync-pairing-request', onPairingRequest);
       window.removeEventListener('inventario:sync-discovery', onDiscovery);
     }
   });

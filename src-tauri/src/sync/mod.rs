@@ -6,6 +6,7 @@ pub mod manager;
 pub mod net;
 pub mod pairing;
 pub mod peer;
+pub mod ports;
 pub mod protocol;
 pub mod server;
 pub mod store;

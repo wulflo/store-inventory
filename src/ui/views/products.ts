@@ -1,10 +1,17 @@
-import { el, icon } from '../dom';
+import { el, icon, matches } from '../dom';
 import { card, emptyState, money } from './common';
 import type { Shell } from '../app';
 import type { App } from '../../app/App';
 import { collectionSummaries, productSummaries } from '../../projection/queries';
 import { showError, toastSuccess } from '../components/toast';
-import { deleteProduct, updateProduct, updateVariant, generateVariants } from '../../domain/commands';
+import {
+  addStockMovement,
+  deleteProduct,
+  updateProduct,
+  updateVariant,
+  generateVariants,
+} from '../../domain/commands';
+import { openCreateCollection } from './productNew';
 import { confirmDialog, openModal } from '../components/modal';
 import { SIZES } from '../../core/sizes';
 import { parseMoneyToCents } from '../../core/money';
@@ -12,11 +19,25 @@ import { parseMoneyToCents } from '../../core/money';
 export function productsView(app: App, shell: Shell): HTMLElement {
   const view = el('div');
   const container = el('div');
+  let query = '';
+
+  const searchInput = el('input', {
+    type: 'search',
+    placeholder: 'Buscar en el catálogo: nombre, SKU, tipo o colección…',
+    'aria-label': 'Buscar en el catálogo',
+    on: {
+      input: () => {
+        query = searchInput.value;
+        render();
+      },
+    },
+  });
 
   view.appendChild(
     el(
       'div',
       { class: 'row-between wrap mb-4' },
+      el('div', { class: 'grow' }, searchInput),
       el(
         'button',
         {
@@ -35,7 +56,21 @@ export function productsView(app: App, shell: Shell): HTMLElement {
     container.replaceChildren();
 
     const collections = collectionSummaries(app.state);
-    const products = productSummaries(app.state);
+    const allProducts = productSummaries(app.state);
+    const queryText = query.trim();
+    const products = queryText
+      ? allProducts.filter((ps) =>
+          matches(
+            [
+              ps.product.name,
+              ps.product.sku,
+              ps.product.type,
+              app.state.collections.get(ps.product.collectionId)?.name ?? '',
+            ].join(' '),
+            queryText,
+          ),
+        )
+      : allProducts;
 
     if (collections.length === 0) {
       container.appendChild(
@@ -59,8 +94,22 @@ export function productsView(app: App, shell: Shell): HTMLElement {
       return;
     }
 
+    if (queryText && products.length === 0) {
+      container.appendChild(
+        card({
+          content: emptyState({
+            icon: 'search',
+            title: 'Sin resultados',
+            message: `No encontramos productos que coincidan con “${queryText}”.`,
+          }),
+        }),
+      );
+      return;
+    }
+
     for (const summary of collections) {
       const collProducts = products.filter((p) => p.product.collectionId === summary.collection.id);
+      if (queryText && collProducts.length === 0) continue;
 
       const productList = el('div', { class: 'list' });
       for (const ps of collProducts) {
@@ -124,7 +173,7 @@ export function productsView(app: App, shell: Shell): HTMLElement {
                   class: 'btn btn-sm btn-ghost',
                   type: 'button',
                   title: 'Variantes y stock mínimo',
-                  on: { click: () => openVariants(app, ps.product.id) },
+                  on: { click: () => openVariants(app, ps.product.id, render) },
                 },
                 'Variantes',
               ),
@@ -144,6 +193,10 @@ export function productsView(app: App, shell: Shell): HTMLElement {
                       if (!ok) return;
                       try {
                         await deleteProduct(app, ps.product.id);
+                        // Igual que con el stock, refrescamos la lista para
+                        // que el producto archivado desaparezca sin cambiar
+                        // de sección.
+                        render();
                         toastSuccess('Producto archivado.');
                       } catch (err) {
                         showError(err);
@@ -202,7 +255,7 @@ export function openEditProduct(app: App, productId: string, onDone?: () => void
   const product = app.state.products.get(productId);
   if (!product) return;
 
-  const collections = [...app.state.collections.values()].filter((c) => !c.deletedAt);
+  let collections = [...app.state.collections.values()].filter((c) => !c.deletedAt);
   const nameInput = el('input', { type: 'text', value: product.name });
   const skuInput = el('input', { type: 'text', value: product.sku });
   const typeSelect = el(
@@ -217,6 +270,31 @@ export function openEditProduct(app: App, productId: string, onDone?: () => void
     ...collections.map((c) =>
       el('option', { value: c.id, text: c.name, selected: c.id === product.collectionId }),
     ),
+  );
+  const newCollectionButton = el(
+    'button',
+    {
+      class: 'btn btn-sm',
+      type: 'button',
+      on: {
+        click: () => {
+          openCreateCollection(app, (collectionId) => {
+            collections = [...app.state.collections.values()].filter((c) => !c.deletedAt);
+            collectionSelect.replaceChildren(
+              ...collections.map((c) =>
+                el('option', {
+                  value: c.id,
+                  text: c.name,
+                  selected: c.id === (collectionId ?? collectionSelect.value),
+                }),
+              ),
+            );
+            if (collectionId) collectionSelect.value = collectionId;
+          });
+        },
+      },
+    },
+    'Nueva colección',
   );
   const priceInput = moneyInput(product.basePriceCents, () => {});
   const descInput = el('textarea', { rows: '2', value: product.description ?? '' });
@@ -242,7 +320,13 @@ export function openEditProduct(app: App, productId: string, onDone?: () => void
         'div',
         { class: 'form-row' },
         el('div', { class: 'field' }, el('label', { text: 'Tipo' }), typeSelect),
-        el('div', { class: 'field' }, el('label', { text: 'Colección' }), collectionSelect),
+        el(
+          'div',
+          { class: 'field' },
+          el('label', { text: 'Colección' }),
+          collectionSelect,
+          el('div', { class: 'mt-3' }, newCollectionButton),
+        ),
       ),
       el('div', { class: 'field' }, el('label', { text: 'Precio de venta' }), priceInput),
       el('div', { class: 'field' }, el('label', { text: 'Descripción' }), descInput),
@@ -309,7 +393,11 @@ function parseMoneyInput(value: string): number {
 }
 
 /** Modal de variantes: stock mínimo, costo, precio y generación masiva. */
-export function openVariants(app: App, productId: string): void {
+export function openVariants(
+  app: App,
+  productId: string,
+  onStockChanged?: () => void,
+): void {
   const product = app.state.products.get(productId);
   if (!product) return;
 
@@ -393,6 +481,43 @@ export function openVariants(app: App, productId: string): void {
         },
       });
 
+      const stockInput = el('input', {
+        type: 'number',
+        min: '0',
+        value: String(agg?.totalQty ?? 0),
+        style: { width: '78px', padding: '5px 8px', textAlign: 'right' },
+        title: 'Editar la cantidad real en stock',
+        on: {
+          change: async () => {
+            const current = app.state.stock.get(variant.id)?.totalQty ?? 0;
+            const target = Math.floor(Number(stockInput.value));
+            if (!Number.isFinite(target) || target < 0) {
+              showError(new Error('El stock debe ser un número mayor o igual a cero.'));
+              stockInput.value = String(current);
+              return;
+            }
+            const delta = target - current;
+            if (delta === 0) return;
+            try {
+              await addStockMovement(app, {
+                variantId: variant.id,
+                movementType: delta > 0 ? 'ajuste_pos' : 'ajuste_neg',
+                quantity: delta,
+                reason: 'Edición manual desde producto',
+              });
+              stockInput.value = String(target);
+              // La lista de productos quedó abierta detrás del modal; la
+              // refrescamos para que el stock no quede desactualizado.
+              onStockChanged?.();
+              toastSuccess(`Stock de ${variant.sku} fijado en ${target}.`);
+            } catch (err) {
+              stockInput.value = String(current);
+              showError(err);
+            }
+          },
+        },
+      });
+
       tbody.appendChild(
         el(
           'tr',
@@ -409,7 +534,7 @@ export function openVariants(app: App, productId: string): void {
           ),
           el('td', { text: variant.sizeCode }),
           el('td', { class: 'mono xsmall', text: variant.sku }),
-          el('td', { class: 'num', text: String(agg?.totalQty ?? 0) }),
+          el('td', { class: 'num' }, stockInput),
           el('td', { class: 'num' }, minInput),
           el('td', { class: 'num' }, costInput),
         ),

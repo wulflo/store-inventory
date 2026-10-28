@@ -346,7 +346,7 @@ function moneyInput(initialCents: number, onChange: (cents: number) => void): HT
   return input;
 }
 
-export function openCreateCollection(app: App, onCreated: () => void): void {
+export function openCreateCollection(app: App, onCreated: (collectionId?: string) => void): void {
   const nameInput = el('input', { type: 'text', placeholder: 'Ej: Invierno 2026' });
   const seasonSelect = el(
     'select',
@@ -372,12 +372,12 @@ export function openCreateCollection(app: App, onCreated: () => void): void {
     ),
     onConfirm: async () => {
       const { createCollection } = await import('../../domain/commands');
-      await createCollection(app, {
+      const { id } = await createCollection(app, {
         name: nameInput.value,
         season: seasonSelect.value as Season,
         year: Number(yearInput.value) || new Date().getFullYear(),
       });
-      onCreated();
+      onCreated(id);
     },
   });
 }

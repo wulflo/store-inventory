@@ -1,7 +1,8 @@
 use crate::sync::framing::{read_frame_async, FrameType};
 use crate::sync::identity::{device_id_from_cert, fingerprint_from_der, Identity};
 use crate::sync::net::is_lan_ip;
-use crate::sync::pairing::{now_ms, PairingRegistry, PAIRING_PORT, SYNC_PORT};
+use crate::sync::pairing::{now_ms, PairingRegistry};
+use crate::sync::ports::SyncPorts;
 use crate::sync::peer::PeersStore;
 use crate::sync::protocol::{batch_events, diff_summaries, validate_incoming_event, SyncSummary};
 use crate::sync::store::{append_missing, load_all, summaries_for};
@@ -38,7 +39,7 @@ impl SyncServerHandle {
 }
 
 /**
- * Escucha conexiones entrantes en 0.0.0.0:14242 y atiende a cada peer
+ * Escucha conexiones entrantes en `ports.sync` y atiende a cada peer
  * emparejado en su propia tarea.
  */
 pub async fn start_sync_server(
@@ -47,11 +48,15 @@ pub async fn start_sync_server(
   peers_path: PathBuf,
   root: String,
   app: AppHandle,
+  ports: SyncPorts,
 ) -> Result<SyncServerHandle, String> {
-  let listener = TcpListener::bind(("0.0.0.0", SYNC_PORT))
+  let listener = TcpListener::bind(("0.0.0.0", ports.sync))
     .await
     .map_err(|e| {
-      format!("No se pudo abrir el puerto {SYNC_PORT}: {e}. ¿Ya hay otra instancia abierta?")
+      format!(
+        "No se pudo abrir el puerto {}: {e}. ¿Ya hay otra instancia u otra app usándolo?",
+        ports.sync
+      )
     })?;
   let config = tls::server_config(&identity, Arc::clone(&peers))?;
   let acceptor = TlsAcceptor::from(Arc::new(config));
@@ -111,7 +116,7 @@ pub async fn start_sync_server(
   Ok(SyncServerHandle {
     shutdown,
     task,
-    port: SYNC_PORT,
+    port: ports.sync,
   })
 }
 
@@ -369,7 +374,6 @@ async fn serve_authenticated(
 pub struct PairingServerHandle {
   shutdown: watch::Sender<bool>,
   task: tokio::task::JoinHandle<()>,
-  pub expires_at: u64,
 }
 
 impl PairingServerHandle {
@@ -381,25 +385,26 @@ impl PairingServerHandle {
 
 pub async fn start_pairing_server(
   identity: Identity,
-  sync_port: u16,
+  ports: SyncPorts,
   registry: Arc<Mutex<PairingRegistry>>,
-  ttl_ms: u64,
-  pairing_token: Option<String>,
+  pairing_token: Arc<Mutex<Option<(String, u64)>>>,
+  app: AppHandle,
 ) -> Result<PairingServerHandle, String> {
-  let listener = TcpListener::bind(("0.0.0.0", PAIRING_PORT))
+  let listener = TcpListener::bind(("0.0.0.0", ports.pairing))
     .await
-    .map_err(|e| format!("No se pudo abrir el puerto de emparejamiento: {e}"))?;
+    .map_err(|e| {
+      format!(
+        "No se pudo abrir el puerto de emparejamiento {}: {e}",
+        ports.pairing
+      )
+    })?;
   let config = Arc::new(tls::pairing_server_config(&identity)?);
   let (shutdown, mut rx) = watch::channel(false);
-  let expires_at = now_ms() + ttl_ms;
 
   let task = tokio::spawn(async move {
-    let deadline = tokio::time::sleep(Duration::from_millis(ttl_ms));
-    tokio::pin!(deadline);
     loop {
       tokio::select! {
         _ = rx.changed() => break,
-        _ = &mut deadline => break,
         accepted = listener.accept() => {
           match accepted {
             Ok((tcp, remote)) => {
@@ -407,16 +412,29 @@ pub async fn start_pairing_server(
               let config = Arc::clone(&config);
               let registry = Arc::clone(&registry);
               let identity = identity.clone();
-              let pairing_token = pairing_token.clone();
+              let pairing_token = Arc::clone(&pairing_token);
+              let app = app.clone();
               tokio::spawn(async move {
+                // Solo aceptamos el token del QR mientras siga vigente. Si no
+                // hay token (o expiró), la solicitud queda pendiente de que el
+                // usuario compare el SAS y confirme.
+                let expected = {
+                  let guard = pairing_token.lock().unwrap_or_else(|e| e.into_inner());
+                  guard
+                    .as_ref()
+                    .filter(|(_, expires)| now_ms() < *expires)
+                    .map(|(token, _)| token.clone())
+                };
                 if let Ok(pending) = crate::sync::pairing::accept_pairing(
                   &identity,
                   tcp,
-                  sync_port,
+                  ports.sync,
                   config,
-                  pairing_token.as_deref(),
+                  expected.as_deref(),
                 ).await {
-                  registry.lock().unwrap_or_else(|e| e.into_inner()).add(pending);
+                  registry.lock().unwrap_or_else(|e| e.into_inner()).add(pending.clone());
+                  // Avisamos a la UI aunque el usuario no esté en Ajustes.
+                  let _ = app.emit("sync-pairing-request", &pending);
                 }
               });
             }
@@ -430,7 +448,6 @@ pub async fn start_pairing_server(
   Ok(PairingServerHandle {
     shutdown,
     task,
-    expires_at,
   })
 }
 

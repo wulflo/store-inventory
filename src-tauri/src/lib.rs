@@ -99,6 +99,15 @@ fn sync_stop(state: tauri::State<'_, SyncManager>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn sync_set_ports(
+  state: tauri::State<'_, SyncManager>,
+  name: String,
+  base_port: u16,
+) -> Result<SyncLocalInfo, String> {
+  state.set_ports(&name, base_port).await
+}
+
+#[tauri::command]
 fn sync_list_peers(state: tauri::State<'_, SyncManager>) -> Result<Vec<Peer>, String> {
   Ok(state.list_peers())
 }
@@ -243,6 +252,7 @@ pub fn run() {
       sync_local_info,
       sync_start,
       sync_stop,
+      sync_set_ports,
       sync_list_peers,
       sync_discovered,
       sync_pair_listen_start,

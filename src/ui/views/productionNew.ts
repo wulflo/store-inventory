@@ -1,4 +1,4 @@
-import { el, icon } from '../dom';
+import { el, icon, matches } from '../dom';
 import { autocomplete } from '../components/autocomplete';
 import { card, emptyState, money } from './common';
 import type { Shell } from '../app';
@@ -23,13 +23,13 @@ export function newProductionView(app: App, shell: Shell): HTMLElement {
   const productInput = autocomplete<Product>({
     placeholder: 'Buscar producto a producir…',
     getItems: (q) => {
-      const needle = q.toLowerCase();
       return [...app.state.products.values()]
         .filter((p) => !p.deletedAt && p.isActive)
-        .filter(
-          (p) =>
-            p.name.toLowerCase().includes(needle) ||
-            p.sku.toLowerCase().includes(needle),
+        .filter((p) =>
+          matches(
+            `${p.name} ${p.sku} ${app.state.collections.get(p.collectionId)?.name ?? ''}`,
+            q,
+          ),
         )
         .slice(0, 8);
     },

@@ -10,6 +10,41 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const EVENTS_SUBDIR: &str = "events";
 const DEVICE_ID_FILE: &str = "device_id";
 
+/// Dominios válidos. Evita que un `domain` con `../` escape de `events/`.
+pub(crate) const ALLOWED_DOMAINS: &[&str] = &[
+  "collections",
+  "products",
+  "colors",
+  "variants",
+  "customers",
+  "orders",
+  "order_lines",
+  "payments",
+  "production_orders",
+  "production_lines",
+  "stock_movements",
+  "expenses",
+  "settings",
+  "device_info",
+];
+
+fn validate_domain(domain: &str) -> Result<(), String> {
+  if ALLOWED_DOMAINS.contains(&domain) {
+    Ok(())
+  } else {
+    Err(format!("Dominio de eventos no válido: {domain}"))
+  }
+}
+
+fn validate_event_line(line: &str) -> Result<(), String> {
+  if line.contains('\n') || line.contains('\r') {
+    return Err("La línea de evento no puede contener saltos de línea.".to_string());
+  }
+  serde_json::from_str::<Value>(line)
+    .map(|_| ())
+    .map_err(|e| format!("La línea de evento no es un JSON válido: {e}"))
+}
+
 /**
  * Serializa las escrituras de eventos dentro del proceso.
  *
@@ -111,6 +146,12 @@ pub fn store_append(root: String, domain: String, lines: Vec<String>) -> Result<
   if lines.is_empty() {
     return Ok(());
   }
+  validate_domain(&domain)?;
+  for line in &lines {
+    if !line.is_empty() {
+      validate_event_line(line)?;
+    }
+  }
   let path = domain_path(&root, &domain);
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent).map_err(|e| format!("No se pudo crear la carpeta de eventos: {e}"))?;
@@ -140,6 +181,7 @@ pub fn store_append(root: String, domain: String, lines: Vec<String>) -> Result<
 /** Lee todo el contenido de un archivo de dominio. Devuelve cadena vacía si no existe. */
 #[tauri::command]
 pub fn store_read(root: String, domain: String) -> Result<String, String> {
+  validate_domain(&domain)?;
   // Se resuelve la clave antes de leer: con el cifrado activado y bloqueado
   // no se devuelve ni siquiera el texto cifrado.
   let key = crate::crypto::resolve_key(&root)?;
@@ -159,11 +201,7 @@ pub fn store_read(root: String, domain: String) -> Result<String, String> {
 #[tauri::command]
 pub fn store_mtimes(root: String) -> Result<Value, String> {
   let dir = events_dir(&root);
-  let domains = [
-    "collections", "products", "colors", "variants", "customers", "orders",
-    "order_lines", "payments", "production_orders", "production_lines",
-    "stock_movements", "expenses", "settings", "device_info",
-  ];
+  let domains = ALLOWED_DOMAINS;
   let mut out = BTreeMap::new();
   for domain in domains {
     let path = dir.join(format!("{domain}.jsonl"));

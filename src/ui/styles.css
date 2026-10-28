@@ -6,48 +6,47 @@
 
 /* ------------------------------------------------------------------
    1. Tokens Material Design 3 (color roles desde semilla)
-   Color semilla primario: #2f6df6 (índigo, armoniza con el logo).
-   Los roles M3 se derivan de ese semilla.
+   Tema "aero": celeste en claro, azul océano en oscuro.
    ------------------------------------------------------------------ */
 
 :root {
   color-scheme: light;
 
-  /* --- Semilla y primario --- */
-  --seed-primary: #2f6df6;
-  --md-sys-color-primary: #2f6df6;
+  /* --- Semilla y primario (celeste) --- */
+  --seed-primary: #0ea5e9;
+  --md-sys-color-primary: #0369a1;
   --md-sys-color-on-primary: #ffffff;
-  --md-sys-color-primary-container: #e7efff;
-  --md-sys-color-on-primary-container: #1a4aa3;
+  --md-sys-color-primary-container: #e0f2fe;
+  --md-sys-color-on-primary-container: #075985;
 
   /* --- Secundario --- */
-  --md-sys-color-secondary: #6e6e80;
+  --md-sys-color-secondary: #4f6f85;
   --md-sys-color-on-secondary: #ffffff;
-  --md-sys-color-secondary-container: #e7e8ec;
-  --md-sys-color-on-secondary-container: #252537;
+  --md-sys-color-secondary-container: #dcecf7;
+  --md-sys-color-on-secondary-container: #12384d;
 
   /* --- Terciario --- */
-  --md-sys-color-tertiary: #2f6df6;
+  --md-sys-color-tertiary: #0e7490;
   --md-sys-color-on-tertiary: #ffffff;
-  --md-sys-color-tertiary-container: #e7efff;
-  --md-sys-color-on-tertiary-container: #1a4aa3;
+  --md-sys-color-tertiary-container: #cffafe;
+  --md-sys-color-on-tertiary-container: #155e75;
 
   /* --- Superficie / fondo --- */
   --md-sys-color-surface: #ffffff;
-  --md-sys-color-on-surface: #1a1b1e;
-  --md-sys-color-surface-variant: #e7e9ec;
-  --md-sys-color-on-surface-variant: #41454b;
-  --md-sys-color-background: #fbfbff;
-  --md-sys-color-on-background: #1a1b1e;
+  --md-sys-color-on-surface: #0b1f2e;
+  --md-sys-color-surface-variant: #e3f2fd;
+  --md-sys-color-on-surface-variant: #365a70;
+  --md-sys-color-background: #f4faff;
+  --md-sys-color-on-background: #0b1f2e;
 
   /* --- Bordes / outline --- */
-  --md-sys-color-outline: #79747e;
-  --md-sys-color-outline-variant: #c7c6cf;
+  --md-sys-color-outline: #90b4ca;
+  --md-sys-color-outline-variant: #c4dfef;
 
   /* --- Inverso --- */
-  --md-sys-color-inverse-surface: #2c2c31;
-  --md-sys-color-inverse-on-surface: #f6f6f9;
-  --md-sys-color-inverse-primary: #8c9dff;
+  --md-sys-color-inverse-surface: #0b2a3d;
+  --md-sys-color-inverse-on-surface: #e6f5ff;
+  --md-sys-color-inverse-primary: #7dd3fc;
 
   /* --- Error --- */
   --md-sys-color-error: #ba1a1a;
@@ -59,13 +58,13 @@
   --bg: var(--md-sys-color-background);
   --surface: var(--md-sys-color-surface);
   --surface-2: var(--md-sys-color-surface-variant);
-  --surface-3: #d7d9de;
-  --overlay: rgba(26, 27, 30, 0.45);
+  --surface-3: #cfe8fa;
+  --overlay: rgba(6, 32, 48, 0.45);
 
   /* --- Texto (compatibilidad) --- */
   --text: var(--md-sys-color-on-surface);
   --text-2: var(--md-sys-color-on-surface-variant);
-  --text-3: #6e6e73;
+  --text-3: #5f8099;
   --text-inverse: var(--md-sys-color-inverse-on-surface);
 
   /* --- Bordes (compatibilidad) --- */
@@ -74,7 +73,7 @@
 
   /* --- Acentos (compatibilidad; mapeados a roles M3) --- */
   --primary: var(--md-sys-color-primary);
-  --primary-hover: #1f5ad9;
+  --primary-hover: #075985;
   --primary-soft: var(--md-sys-color-primary-container);
   --primary-contrast: var(--md-sys-color-on-primary);
 
@@ -84,16 +83,16 @@
   --warning-soft: #fdf1dc;
   --danger: #d93025;
   --danger-soft: #fdeceb;
-  --info: #0b7fa8;
-  --info-soft: #e2f3f9;
+  --info: #0284c7;
+  --info-soft: #e0f2fe;
 
   /* --- Acentos semánticos por estado de pedido (armonizados) --- */
-  --st-pendiente: #6b7686;
-  --st-pendiente-soft: #eceff3;
+  --st-pendiente: #5b7185;
+  --st-pendiente-soft: #e7f0f7;
   --st-produccion: #b06a00;
   --st-produccion-soft: #fdf1dc;
-  --st-listo: #0b7fa8;
-  --st-listo-soft: #e2f3f9;
+  --st-listo: #0284c7;
+  --st-listo-soft: #e0f2fe;
   --st-entregado: #0f9d58;
   --st-entregado-soft: #e3f6ec;
   --st-cancelado: #a3352c;
@@ -178,41 +177,41 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
-  /* --- Semilla y primario (oscuro) --- */
-  --seed-primary: #8c9dff;
-  --md-sys-color-primary: #8c9dff;
-  --md-sys-color-on-primary: #303f67;
-  --md-sys-color-primary-container: #303f67;
-  --md-sys-color-on-primary-container: #e7efff;
+  /* --- Semilla y primario (azul océano) --- */
+  --seed-primary: #38bdf8;
+  --md-sys-color-primary: #4fc3f7;
+  --md-sys-color-on-primary: #00344d;
+  --md-sys-color-primary-container: #0b3a52;
+  --md-sys-color-on-primary-container: #c9ecff;
 
   /* --- Secundario (oscuro) --- */
-  --md-sys-color-secondary: #8c8da1;
-  --md-sys-color-on-secondary: #2c2c37;
-  --md-sys-color-secondary-container: #33333a;
-  --md-sys-color-on-secondary-container: #e7e8ec;
+  --md-sys-color-secondary: #89b4cb;
+  --md-sys-color-on-secondary: #0a2c40;
+  --md-sys-color-secondary-container: #173a52;
+  --md-sys-color-on-secondary-container: #d8eefb;
 
   /* --- Terciario (oscuro) --- */
-  --md-sys-color-tertiary: #8c9dff;
-  --md-sys-color-on-tertiary: #303f67;
-  --md-sys-color-tertiary-container: #303f67;
-  --md-sys-color-on-tertiary-container: #e7efff;
+  --md-sys-color-tertiary: #67e8f9;
+  --md-sys-color-on-tertiary: #00363f;
+  --md-sys-color-tertiary-container: #0a3d4a;
+  --md-sys-color-on-tertiary-container: #cffafe;
 
   /* --- Superficie / fondo (oscuro) --- */
-  --md-sys-color-surface: #121217;
-  --md-sys-color-on-surface: #e6e1e5;
-  --md-sys-color-surface-variant: #333239;
-  --md-sys-color-on-surface-variant: #b3b2b9;
-  --md-sys-color-background: #121217;
-  --md-sys-color-on-background: #e6e1e5;
+  --md-sys-color-surface: #071a2a;
+  --md-sys-color-on-surface: #e2f2fb;
+  --md-sys-color-surface-variant: #0f2c42;
+  --md-sys-color-on-surface-variant: #a9c8da;
+  --md-sys-color-background: #04121f;
+  --md-sys-color-on-background: #e2f2fb;
 
   /* --- Bordes / outline (oscuro) --- */
-  --md-sys-color-outline: #8c8c94;
-  --md-sys-color-outline-variant: #333239;
+  --md-sys-color-outline: #6f95aa;
+  --md-sys-color-outline-variant: #173a50;
 
   /* --- Inverso (oscuro) --- */
-  --md-sys-color-inverse-surface: #e6e1e5;
-  --md-sys-color-inverse-on-surface: #2c2c31;
-  --md-sys-color-inverse-primary: #6e7ef5;
+  --md-sys-color-inverse-surface: #e2f2fb;
+  --md-sys-color-inverse-on-surface: #082638;
+  --md-sys-color-inverse-primary: #0369a1;
 
   /* --- Error (oscuro) --- */
   --md-sys-color-error: #ffb4ab;
@@ -224,13 +223,13 @@
   --bg: var(--md-sys-color-background);
   --surface: var(--md-sys-color-surface);
   --surface-2: var(--md-sys-color-surface-variant);
-  --surface-3: #293140;
-  --overlay: rgba(0, 0, 0, 0.6);
+  --surface-3: #173a52;
+  --overlay: rgba(0, 8, 16, 0.68);
 
   /* --- Texto (compatibilidad) --- */
   --text: var(--md-sys-color-on-surface);
   --text-2: var(--md-sys-color-on-surface-variant);
-  --text-3: #b3b2b9;
+  --text-3: #84a8be;
   --text-inverse: var(--md-sys-color-inverse-on-surface);
 
   /* --- Bordes (compatibilidad) --- */
@@ -239,7 +238,7 @@
 
   /* --- Acentos (compatibilidad) --- */
   --primary: var(--md-sys-color-primary);
-  --primary-hover: #a3b4ff;
+  --primary-hover: #81d4fa;
   --primary-soft: var(--md-sys-color-primary-container);
   --primary-contrast: var(--md-sys-color-on-primary);
 
@@ -944,6 +943,7 @@ table.data td.num {
 .list-item {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-3);
   padding: var(--space-3);
   border-radius: var(--radius-lg);
@@ -963,12 +963,21 @@ table.data td.num {
   border-color: transparent;
 }
 .list-item-main {
-  flex: 1;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.list-item-main > .row {
+  flex-wrap: wrap;
+  row-gap: 4px;
   min-width: 0;
 }
 .list-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
   color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .list-item-sub {
   font-size: var(--fs-sm);
@@ -978,12 +987,22 @@ table.data td.num {
   white-space: nowrap;
 }
 .list-item-value {
+  flex: 0 0 auto;
+  margin-left: auto;
+  text-align: right;
   font-size: var(--fs-xs);
   color: var(--text-3);
   overflow-wrap: anywhere;
   word-break: break-word;
   white-space: normal;
   min-width: 0;
+}
+.list-item > .row,
+.list-item > .btn-group {
+  flex: 0 0 auto;
+}
+.list-item .badge {
+  flex: 0 0 auto;
 }
 
 /* ------------------------------------------------------------------
@@ -2573,9 +2592,19 @@ textarea {
 
 body {
   background:
+    radial-gradient(1200px 620px at 50% -18%, color-mix(in srgb, #7dd3fc 34%, transparent), transparent 70%),
+    radial-gradient(1100px 520px at 8% -10%, color-mix(in srgb, var(--primary) 20%, transparent), transparent 65%),
+    radial-gradient(900px 480px at 100% 0%, color-mix(in srgb, #22d3ee 14%, transparent), transparent 60%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 72%, #dff4ff 28%), var(--bg) 55%);
+  background-attachment: fixed;
+}
+
+html[data-theme='dark'] body {
+  background:
+    radial-gradient(1200px 620px at 50% -18%, color-mix(in srgb, #0ea5e9 20%, transparent), transparent 70%),
     radial-gradient(1100px 520px at 8% -10%, color-mix(in srgb, var(--primary) 16%, transparent), transparent 65%),
-    radial-gradient(900px 480px at 100% 0%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 60%),
-    var(--bg);
+    radial-gradient(900px 480px at 100% 0%, color-mix(in srgb, #0891b2 12%, transparent), transparent 60%),
+    linear-gradient(180deg, #061725 0%, var(--bg) 60%);
   background-attachment: fixed;
 }
 
