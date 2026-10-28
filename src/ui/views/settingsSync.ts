@@ -600,7 +600,7 @@ export function settingsSyncCard(app: App): HTMLElement {
     const input = el('input', {
       type: 'text',
       value: peer.address ?? '',
-      placeholder: '192.168.1.20',
+      placeholder: '192.168.1.20:15000',
       autocomplete: 'off',
     });
     const form = el(
@@ -610,7 +610,7 @@ export function settingsSyncCard(app: App): HTMLElement {
       input,
       el('p', {
         class: 'small muted mt-3',
-        text: `Se usa el puerto de sincronización ${info?.sync_port ?? 14242}. La IP puede cambiar si el router asigna otra.`,
+        text: `Si el otro equipo usa puertos personalizados, escribí IP:PUERTO (por ejemplo 192.168.1.20:15000). Si omitís el puerto se usa el de sincronización ${info?.sync_port ?? 14242}. La IP puede cambiar si el router asigna otra.`,
       }),
     );
     const modal = openModal({
@@ -773,7 +773,7 @@ export function settingsSyncCard(app: App): HTMLElement {
           type: 'button',
           disabled: busy,
           on: { click: () => void confirmPairing() },
-        }, icon('check', 18), 'Los códigos coinciden'),
+        }, icon('check', 18), 'Confirmar y emparejar'),
         el('button', {
           class: 'btn btn-ghost',
           type: 'button',
@@ -837,10 +837,10 @@ export function settingsSyncCard(app: App): HTMLElement {
     const input = el('input', {
       type: 'text',
       value: addressDraft,
-      placeholder: '192.168.1.20',
-      inputmode: 'decimal',
+      placeholder: '192.168.1.20 o 192.168.1.20:15001',
+      inputmode: 'text',
       autocomplete: 'off',
-      'aria-label': 'IP del otro dispositivo',
+      'aria-label': 'IP del otro dispositivo (opcionalmente con puerto)',
       on: {
         input: () => {
           addressDraft = input.value;
@@ -858,7 +858,7 @@ export function settingsSyncCard(app: App): HTMLElement {
           'p',
           {
             class: 'small muted',
-            text: 'Poné la IP del otro dispositivo en la misma red. Ambos tienen que confirmar el mismo código de 6 dígitos.',
+            text: 'Poné la IP del otro dispositivo en la misma red. Si usa puertos personalizados, agregá el puerto de emparejamiento: IP:PUERTO (por ejemplo 192.168.1.20:15001). Ambos tienen que confirmar el mismo código de 6 dígitos.',
           },
         ),
         el(

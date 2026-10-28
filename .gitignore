@@ -5,3 +5,21 @@ src-tauri/target/
 src-tauri/gen/schemas/
 node_modules/
 .env
+
+# --- Secretos y material de firma (NUNCA SUBIR) ---
+.env.*
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.gpg
+*.tar.gz.gpg
+*.base64.txt
+keystore-secrets.txt
+keystore.properties
+key.properties
+# Backups locales de firma (nunca en el repo)
+descargas/
+backups/

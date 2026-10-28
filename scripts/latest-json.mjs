@@ -104,13 +104,12 @@ export function buildLatestJson({
 
     const signature = readFileSync(sigPath, 'utf8').trim();
     if (!signature) throw new Error(`Firma vacía: ${sigPath}`);
-    // Tauri espera el contenido del .sig codificado en base64, no el texto
-    // crudo de minisign.
-    const signatureBase64 = Buffer.from(signature, 'utf8').toString('base64');
-
+    // Tauri v2 ya escribe el .sig como base64 del texto minisign. El plugin
+    // (y nuestro fallback) decodifica una sola vez, así que publicamos el
+    // contenido del archivo tal cual. Volver a codificarlo rompe la firma.
     platforms[artifact.platform] = {
       rank: artifact.rank,
-      signature: signatureBase64,
+      signature,
       url: `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(assetName)}`,
     };
   }

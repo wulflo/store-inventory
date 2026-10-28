@@ -131,7 +131,12 @@ async fn handle_connection(
 ) {
   let mut stream = match acceptor.accept(tcp).await {
     Ok(stream) => stream,
-    Err(_) => return, // Certificado no emparejado o handshake inválido.
+    Err(err) => {
+      // Certificado no emparejado o handshake inválido. Antes se descartaba
+      // en silencio y el usuario solo veía "la conexión falla".
+      eprintln!("[sync] conexión entrante rechazada: {err}");
+      return;
+    }
   };
 
   let peer_der = match stream
@@ -161,7 +166,10 @@ async fn handle_connection(
     Ok(report) => {
       let _ = app.emit("sync-updated", &report);
     }
-    Err(e) => send_error(&mut stream, e).await,
+    Err(e) => {
+      eprintln!("[sync] error atendiendo conexión: {e}");
+      send_error(&mut stream, e).await
+    }
   }
 }
 
@@ -239,22 +247,25 @@ async fn serve_authenticated(
   for domain in &domains_to_consider {
     let events = local_all.get(domain).cloned().unwrap_or_default();
     let ids: Vec<String> = events.iter().map(|e| e.id.clone()).collect();
-    if !ids.is_empty() {
-      write_json(
-        stream,
-        FrameType::IdList,
-        &IdListPayload {
-          domain: domain.clone(),
-          ids,
-        },
-      )
-      .await?;
-    }
+    // Incluir listas vacías: el cliente necesita pedir todos los eventos de
+    // los dominios que solo tiene el servidor (por ejemplo, un Android recién
+    // emparejado que todavía no tiene productos ni variantes).
+    write_json(
+      stream,
+      FrameType::IdList,
+      &IdListPayload {
+        domain: domain.clone(),
+        ids,
+      },
+    )
+    .await?;
   }
 
   let mut sent_bye = false;
   loop {
-    let frame = match tokio::time::timeout(std::time::Duration::from_secs(2), read_frame_async(stream)).await {
+    // 10 s por frame: 2 s era demasiado agresivo en Wi-Fi y podía cortar
+    // la recepción de lotes grandes antes de que llegaran todos.
+    let frame = match tokio::time::timeout(std::time::Duration::from_secs(10), read_frame_async(stream)).await {
       Ok(Ok(f)) => f,
       Ok(Err(e)) => return Err(format!("Error leyendo del cliente: {e}")),
       Err(_) => {
@@ -408,7 +419,10 @@ pub async fn start_pairing_server(
         accepted = listener.accept() => {
           match accepted {
             Ok((tcp, remote)) => {
-              if !is_lan_ip(remote.ip()) { continue; }
+              if !is_lan_ip(remote.ip()) {
+                eprintln!("[sync] emparejamiento rechazado: IP no LAN {remote}");
+                continue;
+              }
               let config = Arc::clone(&config);
               let registry = Arc::clone(&registry);
               let identity = identity.clone();
@@ -425,16 +439,23 @@ pub async fn start_pairing_server(
                     .filter(|(_, expires)| now_ms() < *expires)
                     .map(|(token, _)| token.clone())
                 };
-                if let Ok(pending) = crate::sync::pairing::accept_pairing(
+                match crate::sync::pairing::accept_pairing(
                   &identity,
                   tcp,
                   ports.sync,
                   config,
                   expected.as_deref(),
                 ).await {
-                  registry.lock().unwrap_or_else(|e| e.into_inner()).add(pending.clone());
-                  // Avisamos a la UI aunque el usuario no esté en Ajustes.
-                  let _ = app.emit("sync-pairing-request", &pending);
+                  Ok(pending) => {
+                    registry.lock().unwrap_or_else(|e| e.into_inner()).add(pending.clone());
+                    // Avisamos a la UI aunque el usuario no esté en Ajustes.
+                    let _ = app.emit("sync-pairing-request", &pending);
+                  }
+                  Err(err) => {
+                    // Antes se descartaba en silencio: el usuario solo veía
+                    // "la conexión falla" sin ninguna pista.
+                    eprintln!("[sync] emparejamiento rechazado desde {remote}: {err}");
+                  }
                 }
               });
             }

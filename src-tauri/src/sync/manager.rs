@@ -9,7 +9,7 @@ use crate::sync::net::{
 use crate::sync::pairing::{
   connect_pairing, now_ms, PairQrPayload, PendingPairing, PairingRegistry, PAIRING_QR_TTL_MS,
 };
-use crate::sync::ports::SyncPorts;
+use crate::sync::ports::{SyncPorts, DEFAULT_PAIRING_PORT};
 use crate::sync::peer::{Peer, PeersStore};
 use crate::sync::server::{
   start_pairing_server, start_sync_server, PairingServerHandle, SyncServerHandle,
@@ -588,19 +588,76 @@ impl SyncManager {
   pub async fn connect_pairing(&self, name: &str, address: &str) -> Result<PendingPairing, String> {
     let identity = self.ensure_identity(name)?;
     let ports = self.ports();
-    let mut addr = validate_peer_addr(address, ports.pairing)?;
-    // Si el usuario pegó la dirección de sincronización, usamos el puerto de
-    // emparejamiento en la misma IP.
-    if addr.port() == ports.sync {
-      addr.set_port(ports.pairing);
+    let trimmed = address.trim();
+    // Si el usuario escribió un puerto explícito, respetarlo. Si solo puso la
+    // IP, probamos primero el puerto anunciado por descubrimiento y después
+    // los puertos habituales. Antes se usaba siempre el puerto local, así que
+    // un equipo con puertos personalizados (p. ej. 15000/15001) era imposible
+    // de emparejar escribiendo solo la IP.
+    let explicit_port = trimmed.parse::<std::net::SocketAddr>().is_ok();
+    let base = validate_peer_addr(trimmed, ports.pairing)?;
+    let mut candidates: Vec<std::net::SocketAddr> = Vec::new();
+    if explicit_port {
+      let mut addr = base;
+      if addr.port() == ports.sync {
+        addr.set_port(ports.pairing);
+      }
+      candidates.push(addr);
+    } else {
+      let ip = base.ip();
+      let discovered_ports: Vec<u16> = self
+        .discovered
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .filter(|peer| peer.ip == ip.to_string())
+        .map(|peer| peer.pairing_port)
+        .collect();
+      for port in discovered_ports {
+        candidates.push(std::net::SocketAddr::new(ip, port));
+      }
+      candidates.push(std::net::SocketAddr::new(ip, ports.pairing));
+      if ports.pairing != DEFAULT_PAIRING_PORT {
+        candidates.push(std::net::SocketAddr::new(ip, DEFAULT_PAIRING_PORT));
+      }
     }
-    let pending = connect_pairing(&identity, addr, ports.sync, None).await?;
-    self
-      .pending
-      .lock()
-      .unwrap_or_else(|e| e.into_inner())
-      .add(pending.clone());
-    Ok(pending)
+    let mut unique: Vec<std::net::SocketAddr> = Vec::new();
+    for addr in candidates {
+      if !unique.contains(&addr) {
+        unique.push(addr);
+      }
+    }
+
+    let mut errors: Vec<String> = Vec::new();
+    for addr in &unique {
+      match tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        connect_pairing(&identity, *addr, ports.sync, None),
+      )
+      .await
+      {
+        Ok(Ok(pending)) => {
+          self
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .add(pending.clone());
+          return Ok(pending);
+        }
+        Ok(Err(err)) => errors.push(format!("{addr}: {err}")),
+        Err(_) => errors.push(format!("{addr}: sin respuesta")),
+      }
+    }
+
+    let tried = unique
+      .iter()
+      .map(|addr| addr.port().to_string())
+      .collect::<Vec<_>>()
+      .join(", ");
+    Err(format!(
+      "No se pudo emparejar con {trimmed}. Probé los puertos {tried}. Verificá que ambos equipos estén en la misma red y que el puerto de emparejamiento sea el correcto; si el otro equipo usa puertos personalizados, escribí la dirección como IP:PUERTO. Detalle: {}",
+      errors.join(" · ")
+    ))
   }
 
   /**
@@ -785,6 +842,7 @@ impl SyncManager {
           break;
         }
         Err(err) => {
+          eprintln!("[sync] fallo sincronizando con {addr}: {err}");
           last_error = err;
         }
       }

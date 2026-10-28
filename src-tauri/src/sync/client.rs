@@ -127,23 +127,27 @@ pub async fn sync_peer(
     for domain in &domains_to_consider {
       let events = local_all.get(domain).cloned().unwrap_or_default();
       let ids: Vec<String> = events.iter().map(|e| e.id.clone()).collect();
-      if !ids.is_empty() {
-        write_json(
-          &mut stream,
-          FrameType::IdList,
-          &IdListPayload {
-            domain: domain.clone(),
-            ids,
-          },
-        )
-        .await?;
-      }
+      // Enviar también las listas vacías: si el otro equipo tiene eventos en
+      // un dominio que nosotros no conocemos, necesita saber que nos faltan
+      // todos para poder enviarlos. Antes se omitían y un dispositivo nuevo
+      // terminaba sin el catálogo, aunque el sync dijera "completado".
+      write_json(
+        &mut stream,
+        FrameType::IdList,
+        &IdListPayload {
+          domain: domain.clone(),
+          ids,
+        },
+      )
+      .await?;
     }
 
     // Procesar IdList del servidor y enviar SOLO los eventos que le falten
     let mut sent_bye = false;
     loop {
-      let frame = match tokio::time::timeout(std::time::Duration::from_secs(2), read_frame_async(&mut stream)).await {
+      // 10 s por frame: 2 s era demasiado agresivo en Wi-Fi y podía cortar
+      // la recepción de lotes grandes antes de que llegaran todos.
+      let frame = match tokio::time::timeout(std::time::Duration::from_secs(10), read_frame_async(&mut stream)).await {
         Ok(Ok(f)) => f,
         Ok(Err(e)) => return Err(format!("Error leyendo del peer: {e}")),
         Err(_) => {

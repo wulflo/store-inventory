@@ -176,11 +176,14 @@ pub fn validate_incoming_event(
   }
   // tipo conocido (prefijo de dominio)
   let _prefix = ev.type_.split('.').next().unwrap_or("");
-  // hlc no excesivamente futuro
-  if ev.metadata.hlc > now_ms + future_tolerance_ms {
+  // El HLC del frontend se codifica como `wall_ms * 1000 + contador`
+  // (microsegundos lógicos), mientras que `now_ms` y la tolerancia están en
+  // milisegundos. Comparar ambos valores directamente hacía que TODO evento
+  // entrante pareciera ~1000 veces futuro y la sincronización fallara siempre.
+  let hlc_ms = ev.metadata.hlc / 1000;
+  if hlc_ms > now_ms + future_tolerance_ms {
     return Err(format!(
-      "HLC del evento ({}) excesivamente futuro (ahora {}, tolerancia {})",
-      ev.metadata.hlc, now_ms, future_tolerance_ms
+      "HLC del evento ({hlc_ms} ms) excesivamente futuro (ahora {now_ms} ms, tolerancia {future_tolerance_ms} ms)"
     ));
   }
   // payload serializable (ya lo es si llegó por la red)
@@ -229,6 +232,21 @@ mod tests {
   fn validate_accepts_reasonable_hlc() {
     let ev = make_event("ev-ok", 5000);
     assert!(validate_incoming_event(&ev, 10000, 60_000).is_ok());
+  }
+
+  #[test]
+  fn validate_accepts_hlc_encoded_in_microseconds() {
+    // El HLC real es ms * 1000 + contador; no debe confundirse con ms.
+    let now_ms = 1_793_164_690_356;
+    let ev = make_event("ev-now", now_ms * 1000 + 123);
+    assert!(validate_incoming_event(&ev, now_ms, 60_000).is_ok());
+  }
+
+  #[test]
+  fn validate_rejects_future_hlc_encoded_in_microseconds() {
+    let now_ms = 1_793_164_690_356;
+    let ev = make_event("ev-future", (now_ms + 61_000) * 1000);
+    assert!(validate_incoming_event(&ev, now_ms, 60_000).is_err());
   }
 
   fn make_event(id: &str, hlc: u64) -> DomainEvent {

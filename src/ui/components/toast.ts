@@ -78,7 +78,18 @@ export function toastWarning(message: string, action?: ToastOptions['action']): 
  * Los ValidationError del dominio ya traen un mensaje en español claro.
  */
 export function showError(err: unknown): void {
-  const message = err instanceof Error ? err.message : 'Algo salió mal. Probá de nuevo.';
+  // Tauri rechaza los comandos con un string (el mensaje del backend), no con
+  // un Error. Si solo miramos `instanceof Error`, el usuario ve un texto
+  // genérico y se pierde la causa real (IP inalcanzable, TLS, puerto ocupado).
+  let message = 'Algo salió mal. Probá de nuevo.';
+  if (typeof err === 'string' && err.trim()) {
+    message = err;
+  } else if (err instanceof Error && err.message) {
+    message = err.message;
+  } else if (err && typeof err === 'object' && 'message' in err) {
+    const value = (err as { message?: unknown }).message;
+    if (typeof value === 'string' && value.trim()) message = value;
+  }
   toastError(message);
   console.error(err);
 }
