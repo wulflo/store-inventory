@@ -103,6 +103,10 @@ fn migrate_legacy_jsonl_names(root: &str) -> Result<(), String> {
 /** Borra todos los archivos de eventos (.jsonl) del store. */
 #[tauri::command]
 pub fn store_clear(root: String) -> Result<(), String> {
+  // Serializar con appends y snapshots para no borrar a mitad de una copia.
+  let _guard = EVENTS_WRITE_LOCK
+    .lock()
+    .unwrap_or_else(|e| e.into_inner());
   for name in storage::list_dir(&root, EVENTS_SUBDIR)? {
     if name.ends_with(".jsonl") {
       storage::remove_file(&root, &format!("{EVENTS_SUBDIR}/{name}"))?;
@@ -175,6 +179,40 @@ pub fn store_mtimes(root: String) -> Result<Value, String> {
   Ok(serde_json::to_value(out).map_err(|e| format!("Error serializando mtimes: {e}"))?)
 }
 
+/** Devuelve los eventos crudos (payload cifrado si el cifrado está activo). */
+#[tauri::command]
+pub fn store_export_raw(root: String) -> Result<Value, String> {
+  let mut events = Vec::new();
+  for domain in ALLOWED_DOMAINS {
+    let Some(text) = storage::read_string(&root, &domain_rel(domain))? else {
+      continue;
+    };
+    for line in text.lines() {
+      let trimmed = line.trim();
+      if trimmed.is_empty() {
+        continue;
+      }
+      match serde_json::from_str::<Value>(trimmed) {
+        Ok(value) => {
+          let valid = value.get("id").and_then(Value::as_str).is_some()
+            && value.get("type").and_then(Value::as_str).is_some()
+            && value
+              .get("metadata")
+              .and_then(|m| m.get("hlc"))
+              .and_then(Value::as_i64)
+              .is_some();
+          if valid {
+            events.push(value);
+          }
+        }
+        // Una línea parcial al final se ignora igual que en la lectura normal.
+        Err(_) => continue,
+      }
+    }
+  }
+  Ok(Value::Array(events))
+}
+
 /** Lee o genera el identificador de dispositivo persistido junto a los datos. */
 #[tauri::command]
 pub fn store_device_id(root: String) -> Result<String, String> {
@@ -193,7 +231,7 @@ pub fn store_device_id(root: String) -> Result<String, String> {
 /* UUID v7 (RFC 9562) — mismo layout que la implementación JS         */
 /* ------------------------------------------------------------------ */
 
-fn uuid_v7() -> String {
+pub(crate) fn uuid_v7() -> String {
   use std::sync::atomic::{AtomicU64, Ordering};
   static COUNTER: AtomicU64 = AtomicU64::new(0);
   let ts = SystemTime::now()

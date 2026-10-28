@@ -78,6 +78,8 @@ pub struct LonglifeResult {
   pub total_bytes: u64,
   /// `true` si la copia del día ya estaba al día (sin cambios).
   pub reused: bool,
+  /// `true` si se evitó reemplazar una copia con datos por un `omega` vacío.
+  pub protected: bool,
 }
 
 fn today_str() -> String {
@@ -99,6 +101,7 @@ fn is_snapshot_file(relative: &str) -> bool {
   let file_name = relative.rsplit('/').next().unwrap_or(relative);
   !(relative.starts_with("backups/")
     || relative == MANIFEST_FILE
+    || relative == "writer.json"
     || file_name.starts_with(".keep-"))
 }
 
@@ -291,6 +294,7 @@ fn run_snapshot(
         files: existing.files.len(),
         total_bytes: existing.total_bytes,
         reused: true,
+        protected: false,
       });
     }
   } else {
@@ -341,7 +345,21 @@ fn run_snapshot(
     files: manifest.files.len(),
     total_bytes: manifest.total_bytes,
     reused: false,
+    protected: false,
   })
+}
+
+/// `true` si `omega/events` tiene al menos un archivo `.jsonl`.
+///
+/// Se usa como protección barata: si el usuario vació los datos y todavía no
+/// volvió a escribir, el refresco automático no debe reemplazar el snapshot
+/// del día (que sí tiene datos) por uno vacío.
+fn has_event_files(data_root: &str) -> Result<bool, String> {
+  Ok(
+    storage::list_dir(data_root, "events")?
+      .iter()
+      .any(|name| name.ends_with(".jsonl")),
+  )
 }
 
 /// Actualiza la copia de hoy sin borrarla antes.
@@ -370,6 +388,22 @@ fn run_snapshot_refresh(
         .collect()
     })
     .unwrap_or_default();
+
+  // No reemplazar una copia con datos por un omega vacío (por ejemplo, justo
+  // después de "Vaciar todos los datos"). `force` sigue permitiendo regenerar
+  // desde cero de forma explícita.
+  if let Some(manifest) = &existing {
+    if !manifest.files.is_empty() && !has_event_files(data_root)? {
+      return Ok(LonglifeResult {
+        date: date.to_string(),
+        path: day_dir,
+        files: manifest.files.len(),
+        total_bytes: manifest.total_bytes,
+        reused: true,
+        protected: true,
+      });
+    }
+  }
 
   let mut manifest_files: Vec<LonglifeFile> = Vec::new();
   let mut current_files: BTreeSet<String> = BTreeSet::new();
@@ -443,6 +477,7 @@ fn run_snapshot_refresh(
         files: existing.files.len(),
         total_bytes: existing.total_bytes,
         reused: true,
+        protected: false,
       });
     }
   }
@@ -464,6 +499,7 @@ fn run_snapshot_refresh(
     files: manifest.files.len(),
     total_bytes: manifest.total_bytes,
     reused: false,
+    protected: false,
   })
 }
 
@@ -593,6 +629,41 @@ mod tests {
     assert!(reused.reused);
     let forced = run_snapshot(&omega_s, &vault_s, "2026-10-08", true).unwrap();
     assert!(!forced.reused);
+
+    let _ = std::fs::remove_dir_all(&base);
+  }
+
+  #[test]
+  fn refresh_does_not_replace_a_non_empty_snapshot_with_empty_data() {
+    let base = temp_dir("protect-empty");
+    let omega = base.join("omega");
+    let vault = base.join("vault");
+    let omega_s = omega.to_string_lossy().to_string();
+    let vault_s = vault.to_string_lossy().to_string();
+
+    storage::write_bytes(&omega_s, "events/orders.jsonl", b"uno\n").unwrap();
+    storage::write_bytes(&omega_s, "device_id", b"dev\n").unwrap();
+    run_snapshot(&omega_s, &vault_s, "2026-10-28", false).unwrap();
+
+    // Simula "Vaciar todos los datos": store_clear borra los .jsonl.
+    storage::remove_file(&omega_s, "events/orders.jsonl").unwrap();
+
+    let result = run_snapshot_refresh(&omega_s, &vault_s, "2026-10-28").unwrap();
+    assert!(result.reused);
+    assert!(result.protected);
+    assert_eq!(result.files, 2);
+    assert_eq!(
+      storage::read_string(&vault_s, "longlife/2026-10-28/events/orders.jsonl")
+        .unwrap()
+        .unwrap(),
+      "uno\n",
+      "la copia previa al vaciado debe conservarse"
+    );
+
+    // Un `force` explícito sí puede regenerar la copia vacía.
+    let forced = run_snapshot(&omega_s, &vault_s, "2026-10-28", true).unwrap();
+    assert!(!forced.protected);
+    assert_eq!(forced.files, 1);
 
     let _ = std::fs::remove_dir_all(&base);
   }

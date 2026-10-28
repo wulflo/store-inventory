@@ -9,6 +9,7 @@ import { MemoryEventStore, WebEventStore } from './store/WebEventStore';
 import type { EventStore } from './store/EventStore';
 import { uuid7 } from './core/ids';
 import { initLonglifeSnapshots } from './core/longlifeSnapshots';
+import { setDisplayCurrency } from './core/money';
 import { applyTheme } from './ui/theme';
 
 import { dashboardView } from './ui/views/dashboard';
@@ -107,13 +108,19 @@ async function boot(): Promise<void> {
     app.getSettingJson<string>('accent', localStorage.getItem('accent') ?? 'blue'),
   );
 
-  /* --- Idioma --- */
+  /* --- Idioma (solo español por ahora) --- */
   try {
     const { setLanguage } = await import('./core/i18n');
-    setLanguage(app.getSettingJson<string>('language', 'es') === 'en' ? 'en' : 'es');
+    setLanguage('es');
   } catch {
     /* best-effort */
   }
+
+  /* --- Moneda de visualización (los datos siguen en centavos ARS) --- */
+  setDisplayCurrency(
+    app.getSettingJson<string>('currency', 'ARS'),
+    app.getSettingJson<number>('currency_rate', 1),
+  );
 
   /* --- Registro del dispositivo --- */
   if (!app.state.devices.has(deviceId)) {
@@ -121,6 +128,11 @@ async function boot(): Promise<void> {
       deviceId,
       name: deviceName(),
     });
+  }
+
+  /* --- Regla de un solo escritor: avisar si otro equipo tocó la bóveda --- */
+  if (isTauri() && dataRoot) {
+    void watchWriter(dataRoot, deviceId);
   }
 
   /* --- Copias longlife: al iniciar, tras cambios, al salir y cada 24 h --- */
@@ -137,15 +149,13 @@ async function boot(): Promise<void> {
 }
 
 async function resolveDeviceId(store: EventStore): Promise<string> {
-  // En Tauri el id vive junto a los datos (así sobrevive a reinstalar la web).
+  // La identidad es de esta instalación, no de la bóveda. Así, al copiar la
+  // carpeta a otro equipo, los dos no comparten el mismo `device_id`.
   if (isTauri()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const root = (store as TauriEventStore).getRoot();
-      if (root) {
-        const id = await invoke<string>('store_device_id', { root });
-        if (id) return id;
-      }
+      const id = await invoke<string>('installation_device_id');
+      if (id) return id;
     } catch {
       /* seguimos con el fallback del navegador */
     }
@@ -158,6 +168,39 @@ async function resolveDeviceId(store: EventStore): Promise<string> {
     localStorage.setItem(KEY, id);
   }
   return id;
+}
+
+interface WriterStatus {
+  conflict: boolean;
+  previousDeviceId: string | null;
+  previousDeviceName: string | null;
+}
+
+async function watchWriter(root: string, deviceId: string): Promise<void> {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const name = deviceName();
+    const status = await invoke<WriterStatus>('writer_touch', {
+      root,
+      deviceId,
+      deviceName: name,
+    });
+    if (status.conflict) {
+      toast(
+        `Atención: ${status.previousDeviceName ?? 'otro equipo'} abrió esta bóveda hace poco. ` +
+          'Para evitar perder datos, usá un solo equipo a la vez y esperá a que termine de sincronizar.',
+        { kind: 'warning', duration: 15000 },
+      );
+    }
+    // Latido para que otro equipo detecte que esta bóveda está en uso.
+    // Cada 5 minutos: suficiente para la ventana de 10 minutos y evita
+    // generar escrituras constantes que Foldersync tenga que subir.
+    window.setInterval(() => {
+      void invoke('writer_touch', { root, deviceId, deviceName: name }).catch(() => undefined);
+    }, 5 * 60_000);
+  } catch {
+    /* el aviso es best-effort: no impide abrir la bóveda */
+  }
 }
 
 function deviceName(): string {

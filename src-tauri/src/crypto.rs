@@ -685,6 +685,55 @@ pub fn crypto_status() -> Result<bool, String> {
   Ok(is_unlocked())
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupInfo {
+  pub count: usize,
+  pub total_bytes: u64,
+  pub dirs: Vec<String>,
+}
+
+fn pre_encryption_dirs(root: &str) -> Result<Vec<String>, String> {
+  let mut dirs: Vec<String> = storage::list_dir(root, "backups")?
+    .into_iter()
+    .filter(|name| name.starts_with("pre-encryption-"))
+    .collect();
+  dirs.sort();
+  Ok(dirs)
+}
+
+/// Informa qué respaldos previos al cifrado quedan en `omega/backups/`.
+///
+/// Esos archivos están en texto plano y longlife los excluye a propósito.
+/// El usuario puede borrarlos cuando ya no los necesite.
+#[tauri::command]
+pub fn crypto_backup_info(root: String) -> Result<BackupInfo, String> {
+  let dirs = pre_encryption_dirs(&root)?;
+  let mut total_bytes = 0u64;
+  for dir in &dirs {
+    for relative in storage::list_files_recursive(&root, &format!("backups/{dir}"))? {
+      if let Some(bytes) = storage::read_bytes(&root, &relative)? {
+        total_bytes += bytes.len() as u64;
+      }
+    }
+  }
+  Ok(BackupInfo {
+    count: dirs.len(),
+    total_bytes,
+    dirs,
+  })
+}
+
+/// Borra los respaldos previos al cifrado (`backups/pre-encryption-*`).
+#[tauri::command]
+pub fn crypto_delete_backups(root: String) -> Result<usize, String> {
+  let dirs = pre_encryption_dirs(&root)?;
+  for dir in &dirs {
+    storage::remove_dir_all(&root, &format!("backups/{dir}"))?;
+  }
+  Ok(dirs.len())
+}
+
 /// Cambia la contraseña re-envolviendo la misma DEK (sin re-cifrar eventos).
 #[tauri::command]
 pub fn crypto_change_password(
@@ -1327,6 +1376,48 @@ mod tests {
     assert!(plain.contains("Ana Gómez"));
 
     clear_current_for(&root);
+    let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn raw_export_keeps_payloads_encrypted() {
+    let root = temp_root("raw-export");
+    crypto_enable(root.clone(), "contraseña-segura".to_string()).unwrap();
+    crate::event_store::store_append(
+      root.clone(),
+      "orders".to_string(),
+      vec![sample_event("evt-1", "Order.Created")],
+    )
+    .unwrap();
+
+    let raw = crate::event_store::store_export_raw(root.clone()).unwrap();
+    let text = serde_json::to_string(&raw).unwrap();
+    assert!(!text.contains("Ana Gómez"));
+    assert!(!text.contains("12345"));
+    assert!(text.contains("\"_encrypted\":true"));
+    assert!(text.contains("\"kid\""));
+
+    clear_current_for(&root);
+    let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn backup_info_and_delete_remove_plaintext_pre_encryption_copies() {
+    let root = temp_root("cleanup-backups");
+    write_plain_event(&root, "orders", &sample_event("evt-1", "Order.Created"));
+    let backup_dir = backup_events(&root).unwrap();
+    assert!(backup_dir.starts_with("backups/pre-encryption-"));
+
+    let info = crypto_backup_info(root.clone()).unwrap();
+    assert_eq!(info.count, 1);
+    assert!(info.total_bytes > 0);
+    assert!(info.dirs[0].starts_with("pre-encryption-"));
+
+    let deleted = crypto_delete_backups(root.clone()).unwrap();
+    assert_eq!(deleted, 1);
+    assert_eq!(crypto_backup_info(root.clone()).unwrap().count, 0);
+    assert!(!Path::new(&root).join(&backup_dir).exists());
+
     let _ = fs::remove_dir_all(&root);
   }
 

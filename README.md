@@ -53,18 +53,22 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 
 ### Settings and Data
 - Device info and storage type.
-- Preferences: currency (ARS/USD/EUR) and light/dark theme.
-- Export/import JSON backup (all events).
+- Preferences: display currency (ARS/USD/EUR, manual ARS-per-unit rate) and light/dark theme. Amounts are always stored in ARS cents; the selector only changes how they are formatted. The UI is Spanish-only for now.
+- Export/import JSON backup (all events). In the native app the export keeps each payload encrypted exactly as it is on disk; the browser development store exports decrypted payloads.
 - Initial CSV import (products, customers, orders) with column mapping.
 - **Bóveda elegida por el usuario:** los datos viven en `<bóveda>/omega/`; las copias diarias en `<bóveda>/longlife/YYYY-MM-DD/`, con retención de 7 días. La copia del día se actualiza unos minutos después de cada cambio y al cerrar o pasar a segundo plano. No hay sincronización P2P/LAN integrada.
 - **Sincronización externa opcional:** la bóveda se puede compartir con Google Drive + Foldersync, Syncthing u otro agente de archivos. La app solo lee/escribe la carpeta; no fusiona conflictos.
 - **Updates:** signed search and installation with minisign. Desktop uses Tauri updater; Android downloads APK, verifies signature and saves to **Downloads** folder for manual installation.
 - **Payload encryption (obligatoria):** random 32-byte DEK that encrypts each event `payload` with XChaCha20-Poly1305; the DEK is wrapped (Argon2id) by a master password **and** a one-time recovery code. Metadata stays in plaintext for ordering. The keyring lives in `<bóveda>/omega/keys/keyring.json`; the unlocked key only in RAM. La misma contraseña/código abre la bóveda en otro equipo. Password change re-wraps the DEK; key rotation re-encrypts everything.
-- Risk zone (clear data — pending full implementation).
+- **Pre-encryption backups:** activating or rotating encryption writes plaintext copies under `omega/backups/pre-encryption-*`. They are excluded from longlife; Ajustes > Cifrado lets you review and delete them.
+- **Clear data:** before emptying the event files, the app refreshes today's longlife snapshot. The automatic refresh refuses to replace a non-empty snapshot with an empty `omega`, so the pre-clear copy is preserved.
+- **Device identity:** `device_id` belongs to the local installation (app data dir), not to the vault. Copying the vault to another computer yields a different id. A heartbeat in `omega/writer.json` warns when another device opened the vault recently; the single-writer rule is still manual.
+- Risk zone (clear data).
 
 ### Data Semantics
 - **UUID v7 IDs** (time-sortable, no autoincrement).
 - `created_at` / `updated_at` / `deleted_at` / `device_id` on every entity.
+- `device_id` is the local installation id (outside the vault); events keep the id of the device that wrote them.
 - Money always in **ARS cents** (integers).
 - Changes recorded as immutable events; state is derived (not overwritten).
 - Conflict resolution: movements always merged; editable fields LWW per field with HLC.
@@ -77,6 +81,13 @@ Local-first inventory management for apparel business (t-shirts and hoodies). St
 - Android: el usuario elige una carpeta mediante SAF; los datos quedan en `<bóveda>/omega`.
 - No hay sync P2P/LAN. Para compartir entre equipos, usar un agente externo sobre la carpeta (Google Drive + Foldersync, Syncthing, etc.) y no editar en dos equipos a la vez.
 - Manual JSON export plus automatic snapshots in `<bóveda>/longlife` (daily, refreshed after changes; local o nube si la bóveda está sincronizada).
+
+## Known limitations and continuity
+
+- `docs/LIMITACIONES_CHECKLIST.md`: staged checklist for the remaining known issues, offline verification commands and the pending physical Android/Foldersync test.
+- The UI is Spanish-only for now; the English selector was removed until translations exist.
+- Multi-currency is display-only with a manual ARS-per-unit rate; all stored amounts remain ARS cents.
+- The single-writer rule is still manual. The app warns when another installation touched the vault recently, but does not merge conflicts.
 
 ### Development Requirements
 - Node 20+ and npm.

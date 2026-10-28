@@ -1,6 +1,5 @@
 import { el, icon } from '../dom';
 import { formatMoney } from '../../core/money';
-import { DEFAULT_CURRENCY } from '../../core/money';
 import type {
   ExpenseCategory,
   MovementType,
@@ -10,7 +9,11 @@ import type {
   ProductionStatus,
 } from '../../core/types';
 
-export function money(cents: number, currency = DEFAULT_CURRENCY): string {
+/**
+ * Formatea centavos ARS con la moneda de visualización elegida.
+ * Si se pasa un código explícito, se usa ese (sin cambiar la configuración).
+ */
+export function money(cents: number, currency?: string): string {
   return formatMoney(cents, currency);
 }
 

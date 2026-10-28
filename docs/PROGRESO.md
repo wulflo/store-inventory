@@ -420,3 +420,73 @@ Nota: para el descubrimiento automático, ambos dispositivos deben poder usar UD
 - [ ] Verificar que el workflow Release compile Linux, Windows y Android.
 - [ ] Verificar `latest.json` con `v0.2.8`, `linux-x86_64-deb`, APK y firmas.
 - [ ] Instalar `0.2.8` en desktop/Android y probar sync, QR, puertos y actualización.
+
+---
+
+## 17. Limitaciones de v0.2.12 (2026-10-28)
+
+Se trabajó sobre las 7 limitaciones conocidas. El detalle completo, comandos y
+pruebas físicas pendientes están en **`docs/LIMITACIONES_CHECKLIST.md`**.
+
+- [x] **Moneda:** el selector ahora es moneda de visualización con cotización
+  manual ARS por USD/EUR; los datos siguen en centavos ARS. `money()` usa la
+  configuración global. Tests en `tests/money.test.ts`.
+- [~] **Idioma:** se quitó la opción English para no ofrecer una traducción
+  inexistente; la app fuerza español. La i18n completa queda planificada en la
+  checklist.
+- [x] **Export JSON:** en Tauri se exportan los payloads cifrados crudos
+  (`store_export_raw`); en navegador se avisa que van descifrados.
+- [x] **Backups pre-encryption:** `crypto_backup_info` / `crypto_delete_backups`
+  y botón en Ajustes > Cifrado para revisar y borrar `omega/backups/`.
+- [x] **Vaciar datos:** se refresca longlife antes de borrar; el refresco
+  automático protege un snapshot con datos de un `omega` vacío
+  (`LonglifeResult.protected`).
+- [x] **`device_id`:** ahora es de la instalación (`installation_id` en app
+  data), no de la bóveda. `omega/writer.json` + `writer_touch` avisan si otro
+  equipo abrió la bóveda en los últimos 10 minutos.
+- [ ] **Prueba física:** instalar la APK de release en un teléfono real y probar
+  Foldersync/Drive según la checklist.
+
+Verificación de esta tanda:
+
+- [x] `npm run typecheck`
+- [x] `npm test` — 58 tests
+- [x] `cargo test` — 60 pass, 1 ignored
+- [x] `cargo check`
+
+---
+
+## 18. Release v0.2.13 (2026-10-28)
+
+Cierre de las limitaciones de `v0.2.12` y publicación de una versión nueva.
+El detalle de decisiones y la checklist de continuidad están en
+**`docs/LIMITACIONES_CHECKLIST.md`**.
+
+Cambios incluidos:
+
+- **Moneda de visualización:** selector ARS/USD/EUR con cotización manual
+  (`currency_rate`, ARS por unidad). Los datos y formularios siguen en centavos
+  ARS; al alternar ARS → USD/EUR se recupera la última cotización guardada.
+- **Idioma:** se quitó English y la app fuerza español hasta completar la i18n.
+- **Export cifrado:** `store_export_raw` exporta los payloads cifrados reales en
+  Tauri; el store de navegador avisa que exporta en claro.
+- **Backups pre-encryption:** `crypto_backup_info` / `crypto_delete_backups` y
+  botón en Ajustes > Cifrado.
+- **Vaciar datos:** refresco de longlife antes del vaciado y guarda
+  `LonglifeResult.protected` para no reemplazar una copia con datos por un
+  `omega` vacío.
+- **Identidad de dispositivo:** `installation_device_id` fuera de la bóveda y
+  latido `omega/writer.json` para avisar si otro equipo abrió la bóveda.
+- **Arreglo de UX:** la cotización ya no se pierde al pasar por ARS.
+
+Verificación:
+
+- [x] `npm run typecheck`
+- [x] `npm test` — 58 tests
+- [x] `npm run build`
+- [x] `cargo test` — 60 pass, 1 ignored
+- [x] `cargo check`
+- [x] Smoke test en navegador: gasto de ARS 1.250 mostrado como `US$ 1,00` con
+  cotización 1250; persistencia tras recargar y al alternar monedas.
+
+Pendiente: prueba física de la APK y sincronización Foldersync/Drive.

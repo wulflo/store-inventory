@@ -114,6 +114,52 @@ async function refreshDailyBackup(): Promise<void> {
   }
 }
 
+interface BackupInfo {
+  count: number;
+  totalBytes: number;
+  dirs: string[];
+}
+
+function bytesLabel(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+/**
+ * Los respaldos `backups/pre-encryption-*` quedan en texto plano y longlife
+ * los excluye. Se borran solo con confirmación explícita.
+ */
+async function cleanupPreEncryptionBackups(root: string): Promise<void> {
+  try {
+    const info = await invokeCmd<BackupInfo>('crypto_backup_info', { root });
+    if (info.count === 0) {
+      toast('No hay respaldos previos al cifrado en omega/backups.', { kind: 'info' });
+      return;
+    }
+    const ok = await confirmDialog({
+      title: 'Borrar respaldos previos al cifrado',
+      message:
+        `Hay ${info.count} carpeta(s) en omega/backups con ${bytesLabel(info.totalBytes)} de eventos en TEXTO PLANO. ` +
+        'No forman parte de longlife y no se pueden recuperar después de borrarlas. ' +
+        'Borrálas solo si el cifrado ya está activo y podés leer tus datos con normalidad.',
+      confirmLabel: 'Borrar respaldos',
+      danger: true,
+    });
+    if (!ok) return;
+    const deleted = await invokeCmd<number>('crypto_delete_backups', { root });
+    toast(`Se borraron ${deleted} respaldo(s) previos al cifrado.`, { kind: 'success' });
+  } catch (err) {
+    toast(err instanceof Error ? err.message : String(err), { kind: 'error' });
+  }
+}
+
 /** Muestra el código de recuperación una única vez, con copiar y descargar. */
 export function showRecoveryCodeModal(code: string, note?: string): Promise<void> {
   return new Promise((resolve) => {
@@ -896,6 +942,19 @@ export function settingsCryptoCard(app: any): HTMLElement {
           type: 'button',
           text: 'Rotar clave…',
           on: { click: () => openRotateModal() },
+        }),
+        el('hr', { style: { margin: '18px 0', opacity: '0.3' } }),
+        el('p', {
+          class: 'muted',
+          style: { marginBottom: '8px', fontSize: '13px' },
+          text:
+            'Al activar o rotar el cifrado se guardan copias de los eventos en omega/backups/ antes de migrarlos. Esas copias quedan en texto plano, longlife las excluye y no se borran solas. Eliminalas cuando ya no las necesites.',
+        }),
+        el('button', {
+          class: 'btn btn-ghost',
+          type: 'button',
+          text: 'Revisar y borrar respaldos previos al cifrado',
+          on: { click: () => void cleanupPreEncryptionBackups(root!) },
         }),
       ],
     });

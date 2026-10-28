@@ -7,10 +7,11 @@ mod keys;
 mod storage;
 mod updater;
 mod vault;
+mod writer;
 #[cfg(target_os = "android")]
 mod android_fs;
 
-use event_store::{store_append, store_clear, store_device_id, store_ensure_layout, store_mtimes, store_read};
+use event_store::{store_append, store_clear, store_device_id, store_ensure_layout, store_export_raw, store_mtimes, store_read};
 use tauri::{AppHandle, Manager};
 
 /* ------------------------------------------------------------------ */
@@ -73,6 +74,9 @@ pub fn run() {
       store_read,
       store_mtimes,
       store_device_id,
+      store_export_raw,
+      writer::installation_device_id,
+      writer::writer_touch,
       vault::vault_status,
       vault::vault_pick,
       vault::vault_clear,
@@ -91,6 +95,8 @@ pub fn run() {
       crypto::crypto_status,
       crypto::crypto_change_password,
       crypto::crypto_rotate,
+      crypto::crypto_backup_info,
+      crypto::crypto_delete_backups,
       crypto::crypto_keyring_json,
       crypto::crypto_import_keyring,
       crypto::crypto_adopt_keyring,

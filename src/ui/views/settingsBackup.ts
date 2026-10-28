@@ -32,6 +32,7 @@ interface LonglifeResult {
   files: number;
   totalBytes: number;
   reused: boolean;
+  protected?: boolean;
 }
 
 function bytesLabel(bytes: number): string {
@@ -101,10 +102,12 @@ export function settingsBackupView(host: HTMLElement, _store?: TauriEventStore):
           const { invoke } = await import('@tauri-apps/api/core');
           const result = await invoke<LonglifeResult>('longlife_run', { refresh: true });
           toast(
-            result.reused
-              ? `La copia de ${result.date} ya estaba al día (${result.files} archivos).`
-              : `Copia de ${result.date} actualizada: ${result.files} archivos, ${bytesLabel(result.totalBytes)}.`,
-            { kind: 'success' },
+            result.protected
+              ? `Se conservó la copia de ${result.date}: los datos vivos están vacíos y no se sobrescribió el snapshot. Usá "Regenerar desde cero" si querés reemplazarla.`
+              : result.reused
+                ? `La copia de ${result.date} ya estaba al día (${result.files} archivos).`
+                : `Copia de ${result.date} actualizada: ${result.files} archivos, ${bytesLabel(result.totalBytes)}.`,
+            { kind: result.protected ? 'warning' : 'success', duration: result.protected ? 9000 : undefined },
           );
           await refresh();
         } catch (err) {

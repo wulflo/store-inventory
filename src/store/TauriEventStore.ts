@@ -115,14 +115,16 @@ export class TauriEventStore implements EventStore {
   }
 
   async exportAll(): Promise<ExportBundle> {
-    const events = await this.readAll();
-    const deviceId = await this.invoke<string>('store_device_id', { root: this.root! });
+    // Exportamos las líneas tal como están en disco. Con el cifrado activo el
+    // payload viaja cifrado; el archivo no se puede leer sin el llavero.
+    const raw = await this.invoke<DomainEvent[]>('store_export_raw', { root: this.root! });
+    const deviceId = await this.invoke<string>('installation_device_id');
     return {
       format: 'inventario-tienda/events',
       version: 1,
       exportedAt: Date.now(),
       deviceId,
-      events,
+      events: sortEvents(dedupeEvents(raw)),
     };
   }
 
@@ -148,9 +150,21 @@ export class TauriEventStore implements EventStore {
 
   async clearAll(): Promise<void> {
     if (!this.root) return;
+    // Antes de vaciar, actualizamos la copia longlife del día para conservar
+    // el estado actual. Si este paso falla, no se borra nada.
+    try {
+      await this.invoke<void>('longlife_run', { refresh: true });
+    } catch (err) {
+      throw new Error(
+        `No se pudo guardar la copia longlife previa al vaciado: ${
+          err instanceof Error ? err.message : String(err)
+        }. No se borró ningún dato.`,
+      );
+    }
     await this.invoke<void>('store_clear', { root: this.root });
     this.lastSeen.clear();
-    scheduleLonglifeSnapshot();
+    // No se programa un snapshot después del borrado: el refresco automático
+    // no debe reemplazar la copia del día con un estado vacío.
   }
 
   /* ---------------------------------------------------------------- */

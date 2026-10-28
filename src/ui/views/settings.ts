@@ -5,10 +5,9 @@ import type { App } from '../../app/App';
 import { formatDateTime } from '../../core/dates';
 import { showError, toastSuccess } from '../components/toast';
 import { confirmDialog, openModal } from '../components/modal';
-import { CURRENCIES } from '../../core/money';
+import { CURRENCIES, getDisplayCurrency, parseMoneyToCents, setDisplayCurrency } from '../../core/money';
 import { APP_VERSION } from '../../core/version';
 import { ACCENTS, applyTheme, normalizeAccent, normalizeTheme, type AccentId, type ThemeName } from '../theme';
-import { getLanguage, setLanguage, type Language } from '../../core/i18n';
 import { settingsUpdatesCard } from './settingsUpdates';
 import { settingsCryptoCard } from './settingsCrypto';
 import { settingsVaultCard } from './settingsVault';
@@ -29,6 +28,11 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
         infoRow('Eventos en la base', String(app.state.eventCount)),
         infoRow('Último HLC', String(app.state.lastHlc)),
         infoRow('Dispositivos conocidos', String(app.state.devices.size)),
+        el('p', {
+          class: 'small muted mt-2',
+          text:
+            'El identificador es de esta instalación y no viaja dentro de la bóveda. Al copiar la carpeta a otro equipo, ese equipo usa un identificador distinto: no escribas en la misma bóveda desde dos equipos a la vez.',
+        }),
       ),
     }),
   );
@@ -41,14 +45,68 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
   const activeAccent = (): AccentId =>
     normalizeAccent(document.documentElement.dataset.accent ?? currentAccent);
 
+  const currentCurrency = app.getSettingJson<string>('currency', 'ARS');
+  const currentRate = app.getSettingJson<number>('currency_rate', 1);
+  let lastRate = currentRate > 0 ? currentRate : 1;
+  const formatRate = (rate: number): string => String(rate).replace('.', ',');
+
+  const rateInput = el('input', {
+    class: 'input',
+    type: 'text',
+    inputmode: 'decimal',
+    placeholder: 'Ej. 1250,00',
+    value: currentCurrency === 'ARS' ? '' : formatRate(currentRate),
+  });
+  const rateField = el(
+    'div',
+    { class: 'field', style: { display: currentCurrency === 'ARS' ? 'none' : '' } },
+    el('label', { text: `Cotización (ARS por 1 ${currentCurrency === 'ARS' ? 'USD' : currentCurrency})` }),
+    rateInput,
+  );
+
+  const syncRateField = (code: string): void => {
+    const isArs = code === 'ARS';
+    rateField.style.display = isArs ? 'none' : '';
+    const label = rateField.querySelector('label');
+    if (label) label.textContent = `Cotización (ARS por 1 ${code})`;
+    if (isArs) rateInput.value = '';
+    else if (!rateInput.value.trim()) rateInput.value = formatRate(lastRate);
+  };
+
+  const applyCurrency = async (): Promise<void> => {
+    const code = currencySelect.value;
+    let rate = 1;
+    if (code !== 'ARS') {
+      if (!rateInput.value.trim()) rateInput.value = formatRate(lastRate);
+      const parsed = parseMoneyToCents(rateInput.value);
+      if (!parsed || parsed <= 0) {
+        syncRateField(code);
+        rateInput.focus();
+        throw new Error('Ingresá una cotización mayor a cero en pesos por unidad.');
+      }
+      rate = parsed / 100;
+      lastRate = rate;
+    }
+    await app.setSetting('currency', code);
+    if (code !== 'ARS') await app.setSetting('currency_rate', rate);
+    setDisplayCurrency(code, rate);
+    syncRateField(code);
+    toastSuccess(
+      code === 'ARS'
+        ? 'Moneda de visualización: ARS.'
+        : `Moneda de visualización: ${code} (1 ${code} = ARS ${rate.toLocaleString('es-AR')}).`,
+    );
+    // Recargar la vista para que todos los importes se reformateen.
+    shell.router.navigate('/ajustes');
+  };
+
   const currencySelect = el(
     'select',
     {
       on: {
         change: async () => {
           try {
-            await app.setSetting('currency', currencySelect.value);
-            toastSuccess('Moneda actualizada.');
+            await applyCurrency();
           } catch (err) {
             showError(err);
           }
@@ -59,10 +117,15 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
       el('option', {
         value: c.code,
         text: `${c.code} (${c.symbol})`,
-        selected: app.getSettingJson<string>('currency', 'ARS') === c.code,
+        selected: currentCurrency === c.code,
       }),
     ),
   );
+
+  rateInput.addEventListener('change', () => {
+    if (currencySelect.value === 'ARS') return;
+    void applyCurrency().catch(showError);
+  });
 
   const themeButtons = new Map<ThemeName, HTMLButtonElement>();
   const syncThemeButtons = (theme: ThemeName): void => {
@@ -129,7 +192,7 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
       content: el(
         'div',
         { class: 'form-row' },
-        el('div', { class: 'field' }, el('label', { text: 'Moneda' }), currencySelect),
+        el('div', { class: 'field' }, el('label', { text: 'Moneda de visualización' }), currencySelect, rateField),
         el('div', { class: 'field' }, el('label', { text: 'Tema' }), themeRow),
         el(
           'div',
@@ -137,24 +200,22 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
           el('label', { text: 'Color de acento' }),
           accentGrid,
         ),
-        el('div', { class: 'field' },
+        el(
+          'div',
+          { class: 'field', style: { gridColumn: '1 / -1' } },
           el('label', { text: 'Idioma' }),
-          (() => {
-            const select = el('select', {
-              on: {
-                change: () => {
-                  setLanguage(select.value as Language);
-                  void app.setSetting('language', select.value).catch(showError);
-                  toastSuccess('Idioma actualizado. Recargá la vista para ver los cambios.');
-                },
-              },
-            },
-              el('option', { value: 'es', text: 'Español', selected: getLanguage() === 'es' }),
-              el('option', { value: 'en', text: 'English', selected: getLanguage() === 'en' }),
-            );
-            return select;
-          })(),
+          el('p', {
+            class: 'small muted',
+            text:
+              'Español. La traducción al inglés todavía no está implementada: se quitó la opción English para no mostrar un selector que no cambiaba la interfaz.',
+          }),
         ),
+        el('p', {
+          class: 'small muted',
+          style: { gridColumn: '1 / -1' },
+          text:
+            'La contabilidad se guarda siempre en centavos ARS. La moneda elegida solo cambia cómo se muestran los importes; para USD/EUR se usa la cotización manual de arriba. Los formularios siguen ingresando importes en ARS.',
+        }),
       ),
     }),
   );
@@ -250,7 +311,7 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
               const ok = await confirmDialog({
                 title: 'Vaciar todos los datos',
                 message:
-                  'Se borran todos los pedidos, productos, movimientos y ajustes de este dispositivo. Esto no se puede deshacer. Exportá una copia antes si tenés dudas.',
+                  'Se borran todos los pedidos, productos, movimientos y ajustes de este dispositivo. Antes de borrar se actualiza la copia longlife del día; si esa copia falla, no se vacía nada. Esto no se puede deshacer. Exportá una copia antes si tenés dudas.',
                 confirmLabel: 'Sí, vaciar todo',
                 danger: true,
               });
@@ -260,7 +321,7 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
                   await (app.store as any).clearAll();
                 }
                 await app.rebuild();
-                toastSuccess('Todos los datos se vaciaron.');
+                toastSuccess('Todos los datos se vaciaron. La copia longlife previa al vaciado quedó conservada.');
                 shell.router.navigate('/');
               } catch (err) {
                 showError(err);
@@ -282,7 +343,12 @@ export function settingsView(app: App, shell: Shell): HTMLElement {
         infoRow('Versión', APP_VERSION),
         infoRow('Arquitectura', 'Event Sourcing (JSONL append-only)'),
         infoRow('Stack', 'Tauri 2 + TypeScript vanilla + Vite'),
-        infoRow('Moneda', 'ARS (centavos)'),
+        infoRow(
+          'Moneda',
+          getDisplayCurrency().code === 'ARS'
+            ? 'ARS (centavos)'
+            : `${getDisplayCurrency().code} (visualización; datos en ARS)`,
+        ),
         infoRow('Talles', 'XS → 3XL (fijos)'),
         el('p', {
           class: 'small muted mt-4',
@@ -327,10 +393,12 @@ function kindLabel(kind: string): string {
 /* ------------------------------------------------------------------ */
 
 async function exportBackup(app: App): Promise<void> {
+  const encrypted = app.store.kind === 'tauri';
   const ok = await confirmDialog({
     title: 'Exportar copia de seguridad',
-    message:
-      'El archivo contiene todos los eventos de la tienda, con los payloads cifrados tal como están en disco. Guardalo en un lugar privado y no lo compartas: sin tu contraseña maestra no se pueden leer, pero sigue siendo información sensible.',
+    message: encrypted
+      ? 'El archivo contiene todos los eventos con los payloads cifrados tal como están en disco. Los metadatos (id, tipo, fecha, equipo) siguen en claro. Guardalo en un lugar privado: para leerlo en otro equipo necesitás el mismo llavero y la contraseña maestra.'
+      : 'Estás en el modo navegador de desarrollo: los payloads se exportan DESCIFRADOS. No compartas este archivo. En la app nativa el export va cifrado.',
     confirmLabel: 'Exportar',
   });
   if (!ok) return;
@@ -363,7 +431,11 @@ async function importBackup(app: App, shell: Shell): Promise<void> {
       }
       const ok = await confirmDialog({
         title: 'Restaurar copia',
-        message: `Se van a agregar ${bundle.events?.length ?? 0} eventos. Los que ya tenés se ignoran (se fusiona sin duplicar).`,
+        message:
+          `Se van a agregar ${bundle.events?.length ?? 0} eventos. Los que ya tenés se ignoran (se fusiona sin duplicar).` +
+          (app.store.kind === 'tauri'
+            ? ' Si la copia está cifrada, este equipo debe usar el mismo llavero para poder leerla.'
+            : ''),
         confirmLabel: 'Importar',
       });
       if (!ok) return;

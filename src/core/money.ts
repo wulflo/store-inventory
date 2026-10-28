@@ -26,6 +26,63 @@ export function currencyConfig(code: string): CurrencyConfig {
   return CURRENCIES[code] ?? CURRENCIES[DEFAULT_CURRENCY];
 }
 
+/**
+ * Moneda de visualización.
+ *
+ * La contabilidad sigue siendo en centavos ARS. Este estado solo decide cómo
+ * se formatean los importes en la interfaz. Para USD/EUR se usa una cotización
+ * manual (`arsPerUnit`) porque la app es 100% local y no consulta internet.
+ */
+export interface DisplayCurrency {
+  code: string;
+  /** Pesos argentinos por 1 unidad de la moneda elegida. ARS = 1. */
+  arsPerUnit: number;
+}
+
+let displayCurrency: DisplayCurrency = { code: DEFAULT_CURRENCY, arsPerUnit: 1 };
+
+function normalizeRate(code: string, arsPerUnit: number): number {
+  if (code === DEFAULT_CURRENCY) return 1;
+  return Number.isFinite(arsPerUnit) && arsPerUnit > 0 ? arsPerUnit : 1;
+}
+
+/** Configura la moneda de visualización. Devuelve el estado aplicado. */
+export function setDisplayCurrency(code: string, arsPerUnit = 1): DisplayCurrency {
+  const normalized = CURRENCIES[code] ? code : DEFAULT_CURRENCY;
+  displayCurrency = {
+    code: normalized,
+    arsPerUnit: normalizeRate(normalized, arsPerUnit),
+  };
+  return getDisplayCurrency();
+}
+
+export function getDisplayCurrency(): DisplayCurrency {
+  return { ...displayCurrency };
+}
+
+/**
+ * Convierte centavos ARS a centavos de la moneda de visualización.
+ * El redondeo se hace una sola vez, al mostrar.
+ */
+export function arsCentsToDisplay(
+  cents: number,
+  currency: DisplayCurrency = displayCurrency,
+): number {
+  const rounded = Math.round(cents);
+  if (currency.code === DEFAULT_CURRENCY) return rounded;
+  return Math.round(rounded / normalizeRate(currency.code, currency.arsPerUnit));
+}
+
+/** Convierte centavos de la moneda de visualización a centavos ARS. */
+export function displayCentsToArs(
+  cents: number,
+  currency: DisplayCurrency = displayCurrency,
+): number {
+  const rounded = Math.round(cents);
+  if (currency.code === DEFAULT_CURRENCY) return rounded;
+  return Math.round(rounded * normalizeRate(currency.code, currency.arsPerUnit));
+}
+
 /** Convierte pesos (float) a centavos (entero). */
 export function toCents(amount: number): number {
   return Math.round(amount * 100);
@@ -36,11 +93,28 @@ export function toUnits(cents: number): number {
   return cents / 100;
 }
 
-/** Formatea centavos como "$ 12.500,00" (estilo rioplatense). */
-export function formatMoney(cents: number, code: string = DEFAULT_CURRENCY): string {
+/**
+ * Formatea centavos como "$ 12.500,00" (estilo rioplatense).
+ *
+ * Por defecto usa la moneda de visualización configurada. Si se pasa un
+ * código distinto, se convierte desde ARS con la cotización indicada (o con la
+ * cotización guardada cuando coincide con la moneda activa).
+ */
+export function formatMoney(
+  cents: number,
+  code: string = displayCurrency.code,
+  arsPerUnit?: number,
+): string {
   const cfg = currencyConfig(code);
-  const negative = cents < 0;
-  const abs = Math.abs(Math.round(cents));
+  const currency: DisplayCurrency = {
+    code,
+    arsPerUnit:
+      arsPerUnit ??
+      (code === displayCurrency.code ? displayCurrency.arsPerUnit : normalizeRate(code, 1)),
+  };
+  const displayCents = arsCentsToDisplay(cents, currency);
+  const negative = displayCents < 0;
+  const abs = Math.abs(displayCents);
   const units = abs / 100;
   const fixed = units.toFixed(cfg.decimals);
   const [intPart, decPart] = fixed.split('.');

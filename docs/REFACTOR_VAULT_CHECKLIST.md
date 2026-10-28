@@ -4,6 +4,9 @@
 > **publicado**. Este documento es la fuente de verdad para retomar el trabajo
 > si se corta la conexión, la sesión o el build.
 >
+> **Continuidad 2026-10-28:** las limitaciones posteriores a v0.2.12 están en
+> `docs/LIMITACIONES_CHECKLIST.md`.
+>
 > Última actualización: 2026-10-28
 
 ## 1. Objetivo
@@ -324,6 +327,8 @@ npx tauri android build --debug --apk --target aarch64
   `windows-x86_64`).
 - Pendiente: probar la APK de release en un teléfono físico y luego la
   sincronización real con Foldersync/Google Drive entre teléfono y PC.
+- Siguiente release: `v0.2.13` (limitaciones de `v0.2.12` resueltas). Ver
+  `docs/LIMITACIONES_CHECKLIST.md` y `docs/PROGRESO.md` §18.
 
 ## 9. Sincronización externa de la bóveda
 
