@@ -1,7 +1,7 @@
 {
   "name": "inventario-tienda",
   "private": true,
-  "version": "0.2.12",
+  "version": "0.2.13",
   "type": "module",
   "description": "Gestión local-first para emprendimiento de indumentaria (remeras y buzos)",
   "engines": {
