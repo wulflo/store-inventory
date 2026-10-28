@@ -1,8 +1,8 @@
 # Refactor: bóveda elegida por el usuario + longlife + cifrado obligatorio
 
 > **Estado:** implementado y verificado en emulador Android; release v0.2.12
-> preparado. Este documento es la fuente de verdad para retomar el trabajo si
-> se corta la conexión, la sesión o el build.
+> **publicado**. Este documento es la fuente de verdad para retomar el trabajo
+> si se corta la conexión, la sesión o el build.
 >
 > Última actualización: 2026-10-28
 
@@ -317,6 +317,13 @@ npx tauri android build --debug --apk --target aarch64
 - En hardware real hay que instalar el APK de release; si hay una build debug
   instalada con otra firma, primero hay que desinstalarla (perderá los datos
   locales de la app, no los de la bóveda).
+- Release publicado el `2026-10-28`: [v0.2.12](https://github.com/wulflo/store-inventory/releases/tag/v0.2.12).
+- Workflow de publicación exitoso: [run 40735500745](https://github.com/wulflo/store-inventory/actions/runs/40735500745).
+- Assets publicados: APK universal, AAB, AppImage, `.deb`, MSI, NSIS y
+  `latest.json` (con firma para `android-universal`, `linux-x86_64` y
+  `windows-x86_64`).
+- Pendiente: probar la APK de release en un teléfono físico y luego la
+  sincronización real con Foldersync/Google Drive entre teléfono y PC.
 
 ## 9. Sincronización externa de la bóveda
 
