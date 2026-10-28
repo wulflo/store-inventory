@@ -252,6 +252,11 @@ npx tauri android build --debug --apk --target aarch64
 - **`androidx.documentfile` es obligatorio:** el plugin lo usa para
   `removeFile`/`delete`; sin `androidx.documentfile:documentfile:1.0.1` el
   borrado falla con `Failed resolution of: Landroidx/documentfile/...`.
+- **`tauri-plugin-android-fs` 2.0.1 vs compileSdk:** el crate publicado usa
+  `compileSdk = 34`, pero `:tauri-android` de Tauri 2.12 exige 36. El override
+  está en `src-tauri/gen/android/build.gradle.kts`; no quitarlo. Sin él, el
+  build local puede pasar con el crate cacheado parcheado, pero CI falla en
+  `checkReleaseAarMetadata`.
 - **Caché SAF tras borrar carpetas:** `remove_dir_all` debe llamar
   `ctx.refresh()` después del `delete_dir` JNI; si no, `create_dir_all`
   reutiliza un `DirPath` muerto y falla al recrear `longlife`.
