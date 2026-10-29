@@ -92,6 +92,21 @@ pub struct LonglifeEntry {
   pub relative_path: String,
 }
 
+/// Detalle de una copia, para revisarla antes de restaurar.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LonglifeFolder {
+  pub relative_path: String,
+  /// Ruta absoluta en escritorio; `None` en Android (bóveda SAF).
+  pub absolute_path: Option<String>,
+  pub created_at: Option<String>,
+  pub kind: Option<String>,
+  pub device_id: Option<String>,
+  pub device_name: Option<String>,
+  pub files: Vec<LonglifeFile>,
+  pub total_bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LonglifeResult {
@@ -247,6 +262,22 @@ fn snapshot_relative(device_id: Option<&str>, name: &str) -> String {
 
 fn manifest_relative(snapshot: &str) -> String {
   format!("{snapshot}/{MANIFEST_FILE}")
+}
+
+/// Valida `device_id`/`date` y arma la ruta relativa de una copia.
+fn snapshot_relative_checked(device_id: Option<&str>, date: &str) -> Result<String, String> {
+  if !is_snapshot_name(date) {
+    return Err(format!("'{date}' no es una copia longlife válida."));
+  }
+  match device_id {
+    Some(id) => {
+      if !is_safe_device_folder(id) {
+        return Err("El identificador del dispositivo no es válido.".to_string());
+      }
+      Ok(snapshot_relative(Some(id), date))
+    }
+    None => Ok(snapshot_relative(None, date)),
+  }
 }
 
 fn is_safe_relative(name: &str) -> bool {
@@ -1127,6 +1158,108 @@ fn restore_snapshot(
   })
 }
 
+/// Lista los archivos de una copia sin leer todos sus bytes.
+///
+/// Sirve para revisar qué contiene un snapshot antes de restaurarlo.
+#[tauri::command]
+pub fn longlife_files(
+  app: AppHandle,
+  device_id: Option<String>,
+  date: String,
+) -> Result<LonglifeFolder, String> {
+  let Some(config) = vault::load_config(&app)? else {
+    return Err("Elegí una carpeta bóveda para ver las copias.".to_string());
+  };
+  let relative = snapshot_relative_checked(device_id.as_deref(), &date)?;
+  let manifest = read_manifest(&config.vault_root, &relative)
+    .ok_or_else(|| format!("La copia '{relative}' no tiene un manifiesto válido."))?;
+
+  let mut files = Vec::with_capacity(manifest.files.len());
+  for file in manifest.files {
+    if !is_safe_relative(&file.name) {
+      return Err(format!(
+        "La copia contiene una ruta no permitida: '{}'.",
+        file.name
+      ));
+    }
+    files.push(file);
+  }
+  files.sort_by(|a, b| a.name.cmp(&b.name));
+
+  Ok(LonglifeFolder {
+    absolute_path: absolute_snapshot_path(&config.vault_root, &relative),
+    relative_path: relative,
+    created_at: Some(manifest.created_at),
+    kind: manifest.kind,
+    device_id: manifest.device_id.or(device_id),
+    device_name: manifest.device_name,
+    files,
+    total_bytes: manifest.total_bytes,
+  })
+}
+
+/// Abre en el explorador del sistema la carpeta de una copia o de un
+/// dispositivo. En Android no existe un explorador para la bóveda SAF.
+#[tauri::command]
+pub fn longlife_open_folder(
+  app: AppHandle,
+  device_id: Option<String>,
+  date: Option<String>,
+) -> Result<String, String> {
+  let Some(config) = vault::load_config(&app)? else {
+    return Err("Elegí una carpeta bóveda para abrir las copias.".to_string());
+  };
+
+  let relative = match date.as_deref() {
+    Some(date) => snapshot_relative_checked(device_id.as_deref(), date)?,
+    None => match device_id.as_deref() {
+      Some(id) => {
+        if !is_safe_device_folder(id) {
+          return Err("El identificador del dispositivo no es válido.".to_string());
+        }
+        device_dir(id)
+      }
+      None => LONGLIFE_DIR.to_string(),
+    },
+  };
+
+  #[cfg(target_os = "android")]
+  {
+    let _ = (&config, &relative);
+    Err("Abrir la carpeta solo está disponible en la versión de escritorio.".to_string())
+  }
+
+  #[cfg(not(target_os = "android"))]
+  {
+    use tauri_plugin_opener::OpenerExt;
+    let path = Path::new(&config.vault_root).join(&relative);
+    if !path.is_dir() {
+      return Err(format!("La carpeta '{}' todavía no existe.", path.display()));
+    }
+    let path_str = path.to_string_lossy().to_string();
+    app
+      .opener()
+      .open_path(path_str.clone(), None::<&str>)
+      .map_err(|e| format!("No se pudo abrir la carpeta: {e}"))?;
+    Ok(path_str)
+  }
+}
+
+#[cfg(not(target_os = "android"))]
+fn absolute_snapshot_path(vault_root: &str, relative: &str) -> Option<String> {
+  Some(
+    Path::new(vault_root)
+      .join(relative)
+      .to_string_lossy()
+      .to_string(),
+  )
+}
+
+#[cfg(target_os = "android")]
+fn absolute_snapshot_path(_vault_root: &str, _relative: &str) -> Option<String> {
+  None
+}
+
 /// Borra **todas** las copias longlife de **todos** los dispositivos.
 /// No toca `omega`.
 #[tauri::command]
@@ -1191,6 +1324,21 @@ mod tests {
     assert!(!is_date_dir("2026-10-28-copia"));
     assert!(is_pre_restore_dir("pre-restore-20261028-203000-123"));
     assert!(!is_pre_restore_dir("pre-restore-"));
+  }
+
+  #[test]
+  fn snapshot_relative_checked_rejects_traversal() {
+    assert_eq!(
+      snapshot_relative_checked(Some("device-1"), "2026-10-28").unwrap(),
+      "longlife/device-1/2026-10-28"
+    );
+    assert_eq!(
+      snapshot_relative_checked(None, "2026-10-28").unwrap(),
+      "longlife/2026-10-28"
+    );
+    assert!(snapshot_relative_checked(None, "../omega").is_err());
+    assert!(snapshot_relative_checked(Some("../omega"), "2026-10-28").is_err());
+    assert!(snapshot_relative_checked(Some("device-1"), "manifest.json").is_err());
   }
 
   #[test]

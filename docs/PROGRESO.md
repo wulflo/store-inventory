@@ -529,3 +529,72 @@ Verificación:
 Pendiente: prueba física de la APK y sincronización con un agente externo en un
 teléfono real. El release se publica con el tag `v0.3.0`; el workflow de GitHub
 Actions construye Linux, Windows y Android.
+
+---
+
+## 20. Stock y precios por variante, y revisión de snapshots (2026-10-29)
+
+Trabajo sin commitear sobre `v0.3.0`. Checklist de continuidad en
+**`docs/CONTINUIDAD_CHECKLIST.md`**.
+
+Cambios incluidos:
+
+- **Alta de producto con stock inicial:** la matriz talle × color permite
+  cargar unidades por combinación. Se guardan con `setInitialStock()` como
+  movimiento `inicial` (append-only), sin pasar por una orden de producción.
+- **Precio por variante:** `generateVariants()` acepta `overrides`
+  (`"<talle>|<colorId>"`) con `priceCents`, `costCents` y `minStock` en el mismo
+  `Variant.Created`, sin emitir eventos de actualización extra.
+- **Ofertas y fechas especiales:** el modal “Variantes” del catálogo agrega una
+  columna **Precio** editable y una barra “Aplicar a todas” para cambiar el
+  precio de todas las variantes de golpe. Los pedidos ya guardados conservan su
+  precio.
+- **Lista de productos con rango de precios:** si las variantes difieren, el
+  catálogo muestra `$mín – $máx` en lugar del precio base.
+- **Copias longlife revisables:** nuevos comandos `longlife_files` y
+  `longlife_open_folder`. La UI muestra “Archivos” (ruta + manifiesto con
+  tamaño y SHA-256 abreviado) y “Abrir carpeta” por copia y por dispositivo.
+  En Android la apertura de carpeta no está disponible (bóveda SAF).
+- **Tests:** cobertura de overrides por combinación y del movimiento `inicial`.
+
+Verificación:
+
+- [x] `npm run typecheck`
+- [x] `npm test` — 61 tests
+- [x] `npm run build`
+- [x] `cargo check --manifest-path src-tauri/Cargo.toml`
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml` — 78 pass, 1 ignored
+- [ ] Smoke test en navegador y escritorio
+
+Pendiente: smoke test manual (navegador y escritorio) y commitear. Ver
+`docs/CONTINUIDAD_CHECKLIST.md` para el paso a paso.
+
+---
+
+## 21. Permisos de descarga de actualizaciones en Android (2026-10-29)
+
+Verificación pedida: confirmar si la app puede guardar el APK en la carpeta
+Descargas aunque la bóveda use SAF.
+
+Conclusión:
+
+- **No hay conflicto con SAF.** El permiso de la bóveda es un permiso por
+  carpeta (`ACTION_OPEN_DOCUMENT_TREE`) y no interviene en la descarga.
+- **Android 10+ (API 29+):** el APK se guarda con
+  `tauri-plugin-android-fs` en `Download/InventarioTienda/` usando MediaStore.
+  No requiere `WRITE_EXTERNAL_STORAGE` ni `MANAGE_EXTERNAL_STORAGE`.
+- **Android 9 (API 28):** el plugin usa el directorio público legacy y podía
+  necesitar `WRITE_EXTERNAL_STORAGE` en tiempo de ejecución. Se agregó un
+  **fallback SAF**: si la escritura directa falla, la app abre el diálogo de
+  guardado del sistema (sin permisos) y avisa dónde quedó el archivo.
+- **Manifest actual:** solo `INTERNET` y `WRITE_EXTERNAL_STORAGE`
+  (`maxSdkVersion=28`). No se declara `REQUEST_INSTALL_PACKAGES` porque la app
+  no lanza el instalador: el usuario abre el APK desde el gestor de archivos.
+
+Verificación:
+
+- [x] `cargo check --target aarch64-linux-android` (compila el fallback).
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml`.
+- [ ] Prueba en teléfono/emulador Android 9 y Android 10+ (requiere dispositivo).
+
+Documentación actualizada: `docs/IMPLEMENTATION_MANUAL.md` (sección 6).

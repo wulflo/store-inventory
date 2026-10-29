@@ -90,6 +90,8 @@ pub fn run() {
       vault::vault_clear,
       backup::longlife_status,
       backup::longlife_list,
+      backup::longlife_files,
+      backup::longlife_open_folder,
       backup::longlife_run,
       backup::longlife_restore,
       backup::longlife_delete,

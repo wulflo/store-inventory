@@ -117,6 +117,16 @@ export function productsView(app: App, shell: Shell): HTMLElement {
           .map((vid) => app.state.variants.get(vid))
           .filter((v) => v && !v.deletedAt);
 
+        // Si las variantes tienen precios distintos (oferta, talle con
+        // sobreprecio), la lista muestra el rango en vez del precio base.
+        const prices = [...new Set(variants.map((v) => v!.priceCents))]
+          .filter((cents) => cents > 0)
+          .sort((a, b) => a - b);
+        const priceLabel =
+          prices.length > 1
+            ? `${money(prices[0])} – ${money(prices[prices.length - 1])}`
+            : money(prices[0] ?? ps.product.basePriceCents);
+
         productList.appendChild(
           el(
             'div',
@@ -147,7 +157,7 @@ export function productsView(app: App, shell: Shell): HTMLElement {
             el(
               'div',
               { class: 'list-item-value' },
-              el('div', { text: money(ps.product.basePriceCents) }),
+              el('div', { text: priceLabel }),
               el('div', {
                 class: 'xsmall',
                 style: { color: ps.marginPercent >= 30 ? 'var(--success)' : 'var(--warning)' },
@@ -415,6 +425,50 @@ export function openVariants(
           SIZES.findIndex((s) => s.code === a!.sizeCode) - SIZES.findIndex((s) => s.code === b!.sizeCode),
       );
 
+    if (variants.length > 0) {
+      const bulkPriceInput = moneyInput(product.basePriceCents, () => {});
+      const applyBulk = el('button', {
+        class: 'btn btn-sm',
+        type: 'button',
+        text: 'Aplicar a todas',
+        on: {
+          click: async () => {
+            const cents = parseMoneyToCents(bulkPriceInput.value);
+            if (cents === null || cents < 0) {
+              showError(new Error('Precio inválido.'));
+              return;
+            }
+            try {
+              for (const variant of variants) {
+                await updateVariant(app, variant!.id, { priceCents: cents });
+              }
+              toastSuccess(`Precio ${money(cents)} aplicado a ${variants.length} variante(s).`);
+              onStockChanged?.();
+              render();
+            } catch (err) {
+              showError(err);
+            }
+          },
+        },
+      });
+      body.appendChild(
+        el(
+          'div',
+          { class: 'row-between wrap mb-3' },
+          el(
+            'div',
+            {},
+            el('div', { class: 'strong', text: 'Precio para todas las variantes' }),
+            el('div', {
+              class: 'xsmall dim',
+              text: 'Sirve para una oferta o fecha especial. Los pedidos ya guardados conservan su precio.',
+            }),
+          ),
+          el('div', { class: 'row', style: { gap: '6px' } }, bulkPriceInput, applyBulk),
+        ),
+      );
+    }
+
     const table = el('table', { class: 'data' });
     table.appendChild(
       el(
@@ -428,6 +482,7 @@ export function openVariants(
           el('th', { text: 'SKU' }),
           el('th', { class: 'num', text: 'Stock' }),
           el('th', { class: 'num', text: 'Mín.' }),
+          el('th', { class: 'num', text: 'Precio' }),
           el('th', { class: 'num', text: 'Costo' }),
         ),
       ),
@@ -451,6 +506,33 @@ export function openVariants(
                 minStock: Math.max(0, Math.floor(Number(minInput.value) || 0)),
               });
               toastSuccess('Stock mínimo actualizado.');
+            } catch (err) {
+              showError(err);
+            }
+          },
+        },
+      });
+
+      const priceInput = el('input', {
+        type: 'text',
+        inputmode: 'decimal',
+        value: variant.priceCents ? (variant.priceCents / 100).toFixed(2).replace('.', ',') : '',
+        placeholder: '0,00',
+        title: 'Precio de venta de esta variante',
+        style: { width: '90px', padding: '5px 8px', textAlign: 'right' },
+        on: {
+          change: async () => {
+            const cents = parseMoneyToCents(priceInput.value);
+            if (cents === null || cents < 0) {
+              showError(new Error('Precio inválido.'));
+              priceInput.value = variant.priceCents
+                ? (variant.priceCents / 100).toFixed(2).replace('.', ',')
+                : '';
+              return;
+            }
+            try {
+              await updateVariant(app, variant.id, { priceCents: cents });
+              toastSuccess('Precio actualizado.');
             } catch (err) {
               showError(err);
             }
@@ -536,6 +618,7 @@ export function openVariants(
           el('td', { class: 'mono xsmall', text: variant.sku }),
           el('td', { class: 'num' }, stockInput),
           el('td', { class: 'num' }, minInput),
+          el('td', { class: 'num' }, priceInput),
           el('td', { class: 'num' }, costInput),
         ),
       );

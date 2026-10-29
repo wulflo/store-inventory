@@ -110,7 +110,6 @@ inventario-tienda/
 │           ├── AndroidManifest.xml
 │           └── java/com/inventariotienda/app/
 │               ├── MainActivity.kt
-│               ├── Downloads.kt
 │               └── Vault.kt
 ├── docs/
 │   └── IMPLEMENTATION_MANUAL.md  # This file
@@ -309,22 +308,32 @@ pub fn validate_peer_addr(input: &str, default_port: u16) -> Result<SocketAddr, 
 
 ```xml
 <uses-permission android:name="android.permission.INTERNET" />
-<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-<uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-<!-- Android 9: write to public Downloads -->
-<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-<!-- Android 8+: install APKs -->
-<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+<!-- Android 9: escritura legacy en Descargas públicas -->
+<uses-permission
+    android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="28" />
 ```
 
-### 6.2 Downloads.kt (APK save + install)
+No se declara `MANAGE_EXTERNAL_STORAGE`, `READ_EXTERNAL_STORAGE` ni
+`REQUEST_INSTALL_PACKAGES`. La bóveda usa SAF (permiso por carpeta elegida) y
+el APK se guarda con `tauri-plugin-android-fs` en el almacenamiento público
+`Download` (MediaStore), que es independiente de ese permiso.
 
-**File:** `src-tauri/gen/android/app/src/main/java/com/inventariotienda/app/Downloads.kt`
+### 6.2 Guardado del APK (`updater.rs`)
 
-- **Android 10+ (API 29+)**: Uses `MediaStore.Downloads` (no storage permission needed)
-- **Android 9 (API 28)**: Writes directly to public Downloads dir, requires `WRITE_EXTERNAL_STORAGE` runtime permission
-- **Install**: Uses `FileProvider` (Android 7+) or direct Uri (legacy), grants read permission to installer
+**Archivo:** `src-tauri/src/updater.rs` → `android_install()`.
+
+- **Android 10+ (API 29+)**: `public_storage().write_with_contents_writer()`
+  sobre `PublicGeneralPurposeDir::Download`, ruta
+  `InventarioTienda/Inventario-Tienda-vX.Y.Z.apk`. Usa MediaStore: **no requiere
+  permisos de almacenamiento**.
+- **Android 9 (API 28)**: el plugin usa el directorio público legacy, que puede
+  necesitar `WRITE_EXTERNAL_STORAGE` en runtime. Si la escritura directa falla,
+  la app abre el diálogo SAF del sistema para elegir dónde guardar (funciona sin
+  permisos en todas las versiones).
+- **Instalación**: la app no lanza el instalador. Muestra la ruta y el usuario
+  abre el APK desde el gestor de archivos; así no hace falta
+  `REQUEST_INSTALL_PACKAGES`.
 
 ### 6.3 Vault.kt (SAF persistent vault)
 
@@ -396,8 +405,8 @@ Functions:
 - Maps architecture to APK target (`android-aarch64`, `android-universal`, etc.)
 - Downloads APK via `reqwest` (rustls)
 - Verifies minisign signature
-- Saves to public Downloads via `MediaStore` (API 29+) or direct (API 28)
-- Launches installer via `FileProvider` + `REQUEST_INSTALL_PACKAGES`
+- Saves to public Downloads via MediaStore (API 29+) or SAF fallback (API 28)
+- No instala automáticamente: muestra la ruta para abrir el APK desde el gestor de archivos
 - Base64-encodes `.sig` content in `latest.json`
 
 ### 8.3 latest.json format
@@ -733,8 +742,8 @@ the in-memory key is not protected against a compromised OS or memory dump.
 **Fixes:**
 - Fetch `latest.json`, verify minisign
 - Download APK via `reqwest` (rustls)
-- Save to public Downloads via `MediaStore` (API 29+) or direct (API 28)
-- Launch installer via `FileProvider` + `REQUEST_INSTALL_PACKAGES`
+- Save to public Downloads via MediaStore (API 29+) or SAF fallback (API 28)
+- El usuario abre el APK desde el gestor de archivos (sin `REQUEST_INSTALL_PACKAGES`)
 - Base64-encode `.sig` in `latest.json`
 
 ### 12.4 Desktop Updates
@@ -751,8 +760,8 @@ the in-memory key is not protected against a compromised OS or memory dump.
 **Problem:** Various permission errors on Android and desktop.
 
 **Fixes:**
-- Added `REQUEST_INSTALL_PACKAGES` to manifest
-- Added `WRITE_EXTERNAL_STORAGE` (maxSdkVersion 28) for Android 9
+- Added `WRITE_EXTERNAL_STORAGE` (maxSdkVersion 28) for Android 9; en API 29+
+  MediaStore no necesita permisos y en API 28 hay fallback SAF
 - Created capabilities file with minimal permissions
 - Removed restrictive custom capabilities
 
@@ -947,7 +956,7 @@ npm run typecheck  # tsc --noEmit
 | Android FS (JNI) | `src-tauri/src/android_fs.rs` |
 | Updater | `src-tauri/src/updater.rs` |
 | Android manifest | `src-tauri/gen/android/app/src/main/AndroidManifest.xml` |
-| Android Downloads | `src-tauri/gen/android/app/src/main/java/com/inventariotienda/app/Downloads.kt` |
+| Android Downloads | `src-tauri/src/updater.rs` (`android_install`) |
 | Android Vault (SAF) | `src-tauri/gen/android/app/src/main/java/com/inventariotienda/app/Vault.kt` |
 | Android MainActivity | `src-tauri/gen/android/app/src/main/java/com/inventariotienda/app/MainActivity.kt` |
 | Tauri config | `src-tauri/tauri.conf.json` |

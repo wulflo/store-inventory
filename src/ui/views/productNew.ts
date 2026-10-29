@@ -2,12 +2,19 @@ import { el, icon } from '../dom';
 import { card } from './common';
 import type { Shell } from '../app';
 import type { App } from '../../app/App';
-import { createProduct, createColor, generateVariants } from '../../domain/commands';
+import {
+  createProduct,
+  createColor,
+  generateVariants,
+  setInitialStock,
+} from '../../domain/commands';
 import { showError, toastSuccess } from '../components/toast';
 import { openModalLazy } from '../components/modal';
 import { formatMoney, parseMoneyToCents } from '../../core/money';
 import { SIZES } from '../../core/sizes';
-import type { ProductType, Season } from '../../core/types';
+import type { ProductType, Season, SizeCode } from '../../core/types';
+
+const comboKey = (sizeCode: string, colorId: string): string => `${sizeCode}|${colorId}`;
 
 export function newProductView(app: App, shell: Shell): HTMLElement {
   let collectionId = '';
@@ -24,6 +31,10 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
   const selectedColors = new Set<string>(
     [...app.state.colors.values()].filter((c) => !c.deletedAt).map((c) => c.id),
   );
+  /** Cantidad inicial por combinación `talle|color`. */
+  const variantStock = new Map<string, number>();
+  /** Precio unitario por combinación `talle|color`; si falta, se usa el base. */
+  const variantPrices = new Map<string, number>();
 
   const view = el('div');
   const formBox = el('div');
@@ -127,10 +138,181 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
     updateMargin();
 
     const totalBox = el('div', { class: 'small muted mt-3' });
+    const matrixBox = el('div', { class: 'mt-3' });
+
+    const activeCombos = () =>
+      SIZES.filter((size) => selectedSizes.has(size.code)).flatMap((size) =>
+        colors
+          .filter((color) => selectedColors.has(color.id))
+          .map((color) => ({ size, color })),
+      );
+
     const updateTotal = () => {
-      totalBox.textContent = `${selectedSizes.size} talle(s) × ${selectedColors.size} color(es) = ${
-        selectedSizes.size * selectedColors.size
-      } variante(s).`;
+      const combos = activeCombos();
+      const units = combos.reduce(
+        (sum, combo) => sum + (variantStock.get(comboKey(combo.size.code, combo.color.id)) ?? 0),
+        0,
+      );
+      totalBox.textContent =
+        `${selectedSizes.size} talle(s) × ${selectedColors.size} color(es) = ${combos.length} variante(s)` +
+        ` · ${units} unidad(es) iniciales.`;
+    };
+
+    const renderMatrix = () => {
+      matrixBox.replaceChildren();
+      const combos = activeCombos();
+
+      if (combos.length === 0) {
+        matrixBox.appendChild(
+          el('p', {
+            class: 'muted small',
+            text: 'Elegí al menos un talle y un color para cargar cantidades y precios.',
+          }),
+        );
+        updateTotal();
+        return;
+      }
+
+      matrixBox.appendChild(
+        el(
+          'div',
+          { class: 'row-between wrap mb-3' },
+          el('div', {
+            class: 'section-title',
+            style: { margin: '0' },
+            text: 'Stock y precios por variante',
+          }),
+          el(
+            'div',
+            { class: 'row', style: { gap: '6px' } },
+            el('button', {
+              class: 'btn btn-sm btn-ghost',
+              type: 'button',
+              text: 'Aplicar precio base a todas',
+              on: {
+                click: () => {
+                  for (const combo of combos) {
+                    variantPrices.set(comboKey(combo.size.code, combo.color.id), basePriceCents);
+                  }
+                  renderMatrix();
+                },
+              },
+            }),
+            el('button', {
+              class: 'btn btn-sm btn-ghost',
+              type: 'button',
+              text: 'Vaciar cantidades',
+              on: {
+                click: () => {
+                  for (const combo of combos) {
+                    variantStock.delete(comboKey(combo.size.code, combo.color.id));
+                  }
+                  renderMatrix();
+                },
+              },
+            }),
+          ),
+        ),
+      );
+
+      const table = el('table', { class: 'data' });
+      table.appendChild(
+        el(
+          'thead',
+          {},
+          el(
+            'tr',
+            {},
+            el('th', { text: 'Color' }),
+            el('th', { text: 'Talle' }),
+            el('th', { class: 'num', text: 'Cantidad inicial' }),
+            el('th', { class: 'num', text: 'Precio unitario' }),
+          ),
+        ),
+      );
+
+      const tbody = el('tbody');
+      for (const { size, color } of combos) {
+        const key = comboKey(size.code, color.id);
+        const currentStock = variantStock.get(key) ?? 0;
+        const currentPrice = variantPrices.get(key) ?? basePriceCents;
+
+        const stockInput = el('input', {
+          type: 'number',
+          min: '0',
+          step: '1',
+          inputmode: 'numeric',
+          class: 'qty-input',
+          value: String(currentStock),
+          title: 'Unidades disponibles apenas se crea el producto',
+          on: {
+            input: () => {
+              const qty = Math.max(0, Math.floor(Number(stockInput.value) || 0));
+              if (stockInput.value === '') variantStock.delete(key);
+              else variantStock.set(key, qty);
+              updateTotal();
+            },
+            blur: () => {
+              const qty = Math.max(0, Math.floor(Number(stockInput.value) || 0));
+              stockInput.value = String(qty);
+              if (qty > 0) variantStock.set(key, qty);
+              else variantStock.delete(key);
+              updateTotal();
+            },
+          },
+        });
+
+        const priceInput = el('input', {
+          type: 'text',
+          inputmode: 'decimal',
+          placeholder: '0,00',
+          value: currentPrice ? (currentPrice / 100).toFixed(2).replace('.', ',') : '',
+          style: { width: '110px', textAlign: 'right' },
+          title: 'Precio de esta combinación. Podés usar uno distinto para ofertas o fechas especiales.',
+          on: {
+            input: () => {
+              variantPrices.set(key, parseMoneyToCents(priceInput.value) ?? 0);
+              updateTotal();
+            },
+            blur: () => {
+              const cents = parseMoneyToCents(priceInput.value) ?? 0;
+              variantPrices.set(key, cents);
+              priceInput.value = cents ? (cents / 100).toFixed(2).replace('.', ',') : '';
+            },
+          },
+        });
+
+        tbody.appendChild(
+          el(
+            'tr',
+            {},
+            el(
+              'td',
+              {},
+              el(
+                'span',
+                { class: 'row', style: { gap: '6px' } },
+                el('span', { class: 'color-dot', style: { background: color.hex } }),
+                el('span', { text: color.name }),
+              ),
+            ),
+            el('td', { text: size.code }),
+            el('td', { class: 'num' }, stockInput),
+            el('td', { class: 'num' }, priceInput),
+          ),
+        );
+      }
+      table.appendChild(tbody);
+      matrixBox.appendChild(el('div', { class: 'table-wrap' }, table));
+      matrixBox.appendChild(
+        el('p', {
+          class: 'xsmall dim mt-2',
+          text:
+            'El stock inicial queda registrado como movimiento “inicial”. Los precios por variante se usan en pedidos nuevos; ' +
+            'para una oferta puntual también podés ajustar el precio de la línea al cargar el pedido.',
+        }),
+      );
+      updateTotal();
     };
 
     const sizeButtons = SIZES.map((s) => {
@@ -147,7 +329,7 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
               else selectedSizes.add(s.code);
               btn.classList.toggle('active');
               btn.setAttribute('aria-pressed', String(selectedSizes.has(s.code)));
-              updateTotal();
+              renderMatrix();
             },
           },
         },
@@ -168,7 +350,7 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
               else selectedColors.add(c.id);
               btn.classList.toggle('active');
               btn.setAttribute('aria-pressed', String(selectedColors.has(c.id)));
-              updateTotal();
+              renderMatrix();
             },
           },
         },
@@ -177,7 +359,7 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
       );
       return btn;
     });
-    updateTotal();
+    renderMatrix();
 
     formBox.replaceChildren(
       card({
@@ -261,6 +443,7 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
           colors.length === 0
             ? el('p', { class: 'muted', text: 'Necesitás al menos un color. Creá uno con “+ Nuevo color”.' })
             : el('div', { class: 'chip-row' }, ...colorButtons),
+          matrixBox,
           totalBox,
           el(
             'div',
@@ -297,6 +480,23 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
       return;
     }
     try {
+      const sizes = [...selectedSizes] as SizeCode[];
+      const colorIds = [...selectedColors];
+      const totalCost =
+        costFabricCents + costPrintCents + costLaborCents + costOtherCents;
+
+      // Solo se manda el precio cuando el usuario lo cambió: así una variante
+      // sin tocar sigue el precio base del producto.
+      const overrides: Record<string, { priceCents?: number }> = {};
+      for (const size of sizes) {
+        for (const colorId of colorIds) {
+          const key = comboKey(size, colorId);
+          if (variantPrices.has(key)) {
+            overrides[key] = { priceCents: variantPrices.get(key)! };
+          }
+        }
+      }
+
       const { id } = await createProduct(app, {
         collectionId,
         sku,
@@ -310,14 +510,45 @@ export function newProductView(app: App, shell: Shell): HTMLElement {
         costOtherCents,
       });
 
-      if (selectedSizes.size > 0 && selectedColors.size > 0) {
-        await generateVariants(app, id, [...selectedSizes] as any, [...selectedColors], {
-          costCents: costFabricCents + costPrintCents + costLaborCents + costOtherCents,
-          priceCents: basePriceCents,
-        });
+      let variantsCreated = 0;
+      let initialUnits = 0;
+
+      if (sizes.length > 0 && colorIds.length > 0) {
+        variantsCreated = await generateVariants(
+          app,
+          id,
+          sizes,
+          colorIds,
+          { costCents: totalCost, priceCents: basePriceCents },
+          overrides,
+        );
+
+        // El stock inicial se registra como movimiento append-only después de
+        // crear las variantes. No depende de una orden de producción.
+        const variants = [...(app.state.variantsByProduct.get(id) ?? [])]
+          .map((variantId) => app.state.variants.get(variantId))
+          .filter((variant) => variant && !variant.deletedAt);
+        for (const variant of variants) {
+          const qty = variantStock.get(comboKey(variant!.sizeCode, variant!.colorId)) ?? 0;
+          if (qty > 0) {
+            await setInitialStock(
+              app,
+              variant!.id,
+              qty,
+              'Stock inicial al crear producto',
+            );
+            initialUnits += qty;
+          }
+        }
       }
 
-      toastSuccess('Producto creado.');
+      const detail = [
+        variantsCreated > 0 ? `${variantsCreated} variante(s)` : '',
+        initialUnits > 0 ? `${initialUnits} unidad(es) en stock` : '',
+      ]
+        .filter(Boolean)
+        .join(' y ');
+      toastSuccess(detail ? `Producto creado con ${detail}.` : 'Producto creado.');
       shell.router.navigate('/productos');
     } catch (err) {
       showError(err);

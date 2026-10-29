@@ -248,26 +248,60 @@ async fn android_install(app: &AppHandle) -> Result<String, String> {
 
   let file_name = format!("Inventario-Tienda-v{}.apk", manifest.version);
   let relative = format!("InventarioTienda/{file_name}");
+  let mime = "application/vnd.android.package-archive";
   let mut source = std::io::Cursor::new(&bytes);
-  let saved = app
+  let direct = app
     .android_fs()
     .public_storage()
     .write_with_contents_writer(
       PublicGeneralPurposeDir::Download,
       &relative,
-      Some("application/vnd.android.package-archive"),
+      Some(mime),
       |destination| std::io::copy(&mut source, destination).map(|_| ()),
-    )
-    .map_err(|e| format!("No se pudo guardar el APK en Descargas: {e}"))?;
+    );
+
+  // Android 10+ escribe en Descargas por MediaStore sin permisos extra. En
+  // Android 9 (API 28) el plugin usa el directorio público legacy, que puede
+  // exigir WRITE_EXTERNAL_STORAGE en tiempo de ejecución. Si el guardado
+  // directo falla, se ofrece el diálogo SAF del sistema (funciona en todas las
+  // versiones y no requiere permisos de almacenamiento).
+  let (saved, used_fallback) = match direct {
+    Ok(path) => (path, false),
+    Err(primary_error) => {
+      let picked = app
+        .android_fs()
+        .show_save_file_dialog_with_contents(&file_name, Some(mime), &bytes)
+        .map_err(|e| {
+          format!(
+            "No se pudo guardar el APK en Descargas ({primary_error}) ni elegir otra ubicación: {e}"
+          )
+        })?;
+      match picked {
+        Some(path) => (path, true),
+        None => {
+          return Err(format!(
+            "No se guardó el APK: falló la escritura en Descargas ({primary_error}) y se canceló el guardado."
+          ))
+        }
+      }
+    }
+  };
 
   let actual_name = app
     .android_fs()
     .get_file_name(&saved)
     .unwrap_or(file_name);
-  Ok(format!(
-    "APK {} guardado en Descargas/InventarioTienda/{}. Abrilo desde el gestor de archivos para instalar la actualización.",
-    manifest.version, actual_name
-  ))
+  if used_fallback {
+    Ok(format!(
+      "APK {} guardado como {} en la ubicación elegida. Abrilo desde el gestor de archivos para instalar la actualización.",
+      manifest.version, actual_name
+    ))
+  } else {
+    Ok(format!(
+      "APK {} guardado en Descargas/InventarioTienda/{}. Abrilo desde el gestor de archivos para instalar la actualización.",
+      manifest.version, actual_name
+    ))
+  }
 }
 
 /* ----------------------------- Desktop ---------------------------- */

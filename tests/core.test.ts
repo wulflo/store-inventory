@@ -58,6 +58,57 @@ export async function makeApp() {
   return { app, store, collectionId, colorId, productId, bySize };
 }
 
+describe('variantes con overrides', () => {
+  it('permite precio distinto por combinación al crear el producto', async () => {
+    const { app, collectionId, colorId } = await makeApp();
+    const { id: productId } = await createProduct(app, {
+      collectionId,
+      sku: 'OFE-001',
+      name: 'Remera de oferta',
+      type: 'remera',
+      basePriceCents: 1_000_000,
+      costFabricCents: 300_000,
+      costPrintCents: 0,
+      costLaborCents: 200_000,
+      costOtherCents: 0,
+    });
+
+    const created = await generateVariants(
+      app,
+      productId,
+      ['S', 'M'] as SizeCode[],
+      [colorId],
+      { priceCents: 1_000_000, minStock: 1 },
+      { [`M|${colorId}`]: { priceCents: 1_500_000, minStock: 3 } },
+    );
+
+    expect(created).toBe(2);
+    const variants = [...(app.state.variantsByProduct.get(productId) ?? [])].map(
+      (id) => app.state.variants.get(id)!,
+    );
+    const bySize = new Map(variants.map((v) => [v.sizeCode, v]));
+    expect(bySize.get('S')!.priceCents).toBe(1_000_000);
+    expect(bySize.get('S')!.minStock).toBe(1);
+    expect(bySize.get('M')!.priceCents).toBe(1_500_000);
+    expect(bySize.get('M')!.minStock).toBe(3);
+  });
+
+  it('carga el stock inicial como movimiento "inicial"', async () => {
+    const { app, bySize } = await makeApp();
+    const variantId = bySize.get('S')!;
+
+    await setInitialStock(app, variantId, 4, 'Stock inicial al crear producto');
+
+    expect(app.state.stock.get(variantId)?.totalQty).toBe(4);
+    const movements = [...app.state.stockMovements.values()].filter(
+      (m) => m.variantId === variantId,
+    );
+    expect(movements).toHaveLength(1);
+    expect(movements[0].movementType).toBe('inicial');
+    expect(movements[0].quantity).toBe(4);
+  });
+});
+
 describe('stock', () => {
   it('deriva el stock a partir de los movimientos', async () => {
     const { app, bySize } = await makeApp();

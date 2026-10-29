@@ -208,13 +208,27 @@ export interface VariantInput {
   barcode?: string;
 }
 
-/** Genera el producto cartesiano talles × colores para un producto. */
+export interface VariantOverrides {
+  minStock?: number;
+  costCents?: number;
+  priceCents?: number;
+}
+
+/**
+ * Genera el producto cartesiano talles × colores para un producto.
+ *
+ * `overrides` permite fijar stock mínimo, costo o precio por combinación
+ * (`"<talle>|<colorId>"`) sin emitir un segundo evento de actualización. Se usa
+ * al crear un producto con precios distintos por variante (ofertas, fechas
+ * especiales, talles con sobreprecio).
+ */
 export async function generateVariants(
   app: App,
   productId: string,
   sizeCodes: SizeCode[],
   colorIds: string[],
   defaults: { minStock?: number; costCents?: number; priceCents?: number } = {},
+  overrides: Record<string, VariantOverrides> = {},
 ): Promise<number> {
   const product = app.state.products.get(productId);
   if (!product) throw new ValidationError('El producto no existe.');
@@ -233,15 +247,16 @@ export async function generateVariants(
     for (const sizeCode of SIZES.map((s) => s.code).filter((c) => sizeCodes.includes(c))) {
       if (existing.has(`${sizeCode}|${colorId}`)) continue;
       const color = app.state.colors.get(colorId)!;
+      const override = overrides[`${sizeCode}|${colorId}`];
       payloads.push({
         id: uuid7(),
         productId,
         sizeCode,
         colorId,
         sku: `${product.sku}-${sizeCode}-${color.name.slice(0, 3).toUpperCase()}`,
-        minStock: defaults.minStock ?? 0,
-        costCents: defaults.costCents ?? productTotalCost(product),
-        priceCents: defaults.priceCents ?? product.basePriceCents,
+        minStock: override?.minStock ?? defaults.minStock ?? 0,
+        costCents: override?.costCents ?? defaults.costCents ?? productTotalCost(product),
+        priceCents: override?.priceCents ?? defaults.priceCents ?? product.basePriceCents,
         sortOrder: SIZES.find((s) => s.code === sizeCode)?.sortOrder ?? 0,
       });
     }

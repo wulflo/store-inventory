@@ -1,6 +1,6 @@
 import { el, mount } from '../dom';
 import { toast, showError } from '../components/toast';
-import { confirmDialog } from '../components/modal';
+import { confirmDialog, openModal } from '../components/modal';
 import { formatDateTime } from '../../core/dates';
 import type { App } from '../../app/App';
 import type { TauriEventStore } from '../../store/TauriEventStore';
@@ -8,6 +8,10 @@ import type { VaultStatus } from './vaultSetup';
 
 function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+function isAndroid(): boolean {
+  return /Android/i.test(navigator.userAgent);
 }
 
 interface LonglifeStatus {
@@ -47,6 +51,17 @@ interface LonglifeResult {
   totalBytes: number;
   reused: boolean;
   protected?: boolean;
+}
+
+interface LonglifeFolder {
+  relativePath: string;
+  absolutePath: string | null;
+  createdAt: string | null;
+  kind: string | null;
+  deviceId: string | null;
+  deviceName: string | null;
+  files: { name: string; bytes: number; sha256: string }[];
+  totalBytes: number;
 }
 
 interface LonglifeRestoreResult {
@@ -213,6 +228,77 @@ export function settingsBackupView(
       },
     },
   });
+
+  async function showFiles(entry: LonglifeEntry): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const folder = await invoke<LonglifeFolder>('longlife_files', {
+        deviceId: entry.deviceId,
+        date: entry.date,
+      });
+      const location = folder.absolutePath ?? `<bóveda>/${folder.relativePath}`;
+      const body = el(
+        'div',
+        {},
+        el('p', { class: 'small muted mono', text: location }),
+        el('div', { class: 'table-wrap', style: { maxHeight: '55vh', overflow: 'auto' } },
+          el(
+            'table',
+            { class: 'data' },
+            el(
+              'thead',
+              {},
+              el(
+                'tr',
+                {},
+                el('th', { text: 'Archivo' }),
+                el('th', { class: 'num', text: 'Tamaño' }),
+                el('th', { text: 'SHA-256' }),
+              ),
+            ),
+            el(
+              'tbody',
+              {},
+              ...folder.files.map((file) =>
+                el(
+                  'tr',
+                  {},
+                  el('td', { class: 'mono xsmall', text: file.name }),
+                  el('td', { class: 'num xsmall', text: bytesLabel(file.bytes) }),
+                  el('td', { class: 'mono xsmall dim', text: file.sha256.slice(0, 12) }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      openModal({
+        title: entry.kind === 'pre-restore' ? 'Copia previa a restaurar' : `Copia del ${entry.date}`,
+        subtitle: `${folder.files.length} archivo(s) · ${bytesLabel(folder.totalBytes)}${
+          folder.createdAt ? ` · ${formatDateTime(Date.parse(folder.createdAt))}` : ''
+        }`,
+        wide: true,
+        body,
+      });
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function openFolder(entry?: LonglifeEntry, deviceId?: string | null): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const path = await invoke<string>('longlife_open_folder', {
+        deviceId: entry ? entry.deviceId : (deviceId ?? null),
+        date: entry ? entry.date : null,
+      });
+      toast(`Carpeta abierta: ${path}`, { kind: 'success' });
+    } catch (err) {
+      showError(err);
+    }
+  }
 
   async function restoreEntry(entry: LonglifeEntry): Promise<void> {
     if (!isTauri() || !entry.valid || restoring) return;
@@ -552,7 +638,19 @@ export function settingsBackupView(
                     ? el('span', { class: 'badge', style: { marginLeft: '8px' } }, 'Formato anterior')
                     : null,
                 ]),
-                el('span', { class: 'small muted' }, group.deviceId ? group.deviceId.slice(0, 8) : ''),
+                el(
+                  'div',
+                  { class: 'row', style: { gap: '8px', alignItems: 'center' } },
+                  isTauri() && !isAndroid()
+                    ? el('button', {
+                        class: 'btn btn-ghost btn-sm',
+                        type: 'button',
+                        text: 'Abrir carpeta',
+                        on: { click: () => void openFolder(undefined, group.deviceId) },
+                      })
+                    : null,
+                  el('span', { class: 'small muted' }, group.deviceId ? group.deviceId.slice(0, 8) : ''),
+                ),
               ]),
               el(
                 'div',
@@ -581,6 +679,20 @@ export function settingsBackupView(
                     el(
                       'div',
                       { class: 'btn-group' },
+                      el('button', {
+                        class: 'btn btn-ghost',
+                        type: 'button',
+                        text: 'Archivos',
+                        on: { click: () => void showFiles(entry) },
+                      }),
+                      isTauri() && !isAndroid()
+                        ? el('button', {
+                            class: 'btn btn-ghost',
+                            type: 'button',
+                            text: 'Abrir carpeta',
+                            on: { click: () => void openFolder(entry) },
+                          })
+                        : null,
                       el('button', {
                         class: 'btn btn-ghost',
                         type: 'button',
