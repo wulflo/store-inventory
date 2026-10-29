@@ -20,6 +20,7 @@ use crate::{event_store, storage};
 
 const WRITER_FILE: &str = "writer.json";
 const INSTALLATION_FILE: &str = "installation_id";
+const INSTALLATION_NAME_FILE: &str = "installation_name";
 /// Ventana para considerar que otro equipo sigue usando la bóveda.
 const CONFLICT_WINDOW_MS: u64 = 10 * 60 * 1000;
 
@@ -73,6 +74,45 @@ pub fn installation_device_id(app: AppHandle) -> Result<String, String> {
   Ok(id)
 }
 
+/// Nombre legible por defecto si el frontend todavía no lo guardó.
+pub fn default_device_name() -> String {
+  if cfg!(target_os = "android") {
+    "Celular Android".to_string()
+  } else if cfg!(target_os = "ios") {
+    "Celular iOS".to_string()
+  } else if cfg!(target_os = "macos") {
+    "Mac".to_string()
+  } else if cfg!(target_os = "windows") {
+    "Windows".to_string()
+  } else if cfg!(target_os = "linux") {
+    "Linux".to_string()
+  } else {
+    "Este equipo".to_string()
+  }
+}
+
+/// Nombre que el frontend guardó en `writer_touch` (best-effort).
+pub fn installation_name(app: &AppHandle) -> Option<String> {
+  let path = app_data_file(app, INSTALLATION_NAME_FILE).ok()?;
+  let text = fs::read_to_string(path).ok()?;
+  let trimmed = text.trim();
+  if trimmed.is_empty() {
+    None
+  } else {
+    Some(trimmed.to_string())
+  }
+}
+
+fn save_installation_name(app: &AppHandle, name: &str) -> Result<(), String> {
+  let trimmed = name.trim();
+  if trimmed.is_empty() {
+    return Ok(());
+  }
+  let path = app_data_file(app, INSTALLATION_NAME_FILE)?;
+  fs::write(path, format!("{trimmed}\n"))
+    .map_err(|e| format!("No se pudo guardar el nombre del dispositivo: {e}"))
+}
+
 fn read_writer(root: &str) -> Option<WriterFile> {
   storage::read_string(root, WRITER_FILE)
     .ok()
@@ -90,10 +130,12 @@ fn is_conflict(previous: Option<&WriterFile>, device_id: &str, now: u64) -> bool
 /// hace pocos minutos. Se llama al arrancar y cada 5 minutos.
 #[tauri::command]
 pub fn writer_touch(
+  app: AppHandle,
   root: String,
   device_id: String,
   device_name: String,
 ) -> Result<WriterStatus, String> {
+  let _ = save_installation_name(&app, &device_name);
   let now = now_ms();
   let previous = read_writer(&root);
   let conflict = is_conflict(previous.as_ref(), &device_id, now);

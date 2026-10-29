@@ -21,7 +21,7 @@
 | 4 | Backups pre-encryption en texto plano | `[x]` | Ajustes > Cifrado muestra y borra `omega/backups/pre-encryption-*`. |
 | 5 | Vaciar datos puede dejar longlife vacío | `[x]` | Snapshot previo al vaciado + guarda que impide reemplazar una copia con datos por un `omega` vacío. |
 | 6 | `device_id` compartido al copiar la bóveda | `[x]` | El id pasa a ser de la instalación (fuera de la bóveda). Latido en `omega/writer.json` avisa si otro equipo abrió la bóveda hace poco. |
-| 7 | Falta prueba física de la APK y Foldersync/Drive | `[ ]` | Requiere teléfono real. Checklist detallada abajo. |
+| 7 | Falta prueba física de la APK y de un agente de sincronización externo | `[ ]` | Requiere teléfono real. Checklist detallada abajo. |
 
 ### Lo que NO se hizo (a propósito)
 
@@ -29,7 +29,7 @@
   selector English y se fuerza español para que no haya fechas en inglés con
   textos en español. Ver fase 2.
 - **Lock distribuido real:** el aviso de `writer.json` es advisory. No bloquea
-  escrituras ni pretende resolver conflictos de Foldersync. La regla sigue
+  escrituras ni pretende resolver conflictos de sincronización externa. La regla sigue
   siendo “un solo equipo escribe a la vez”.
 - **Conversión de formularios:** los inputs siguen en ARS. Cambiar la moneda
   solo afecta la visualización de importes ya guardados.
@@ -252,18 +252,18 @@ fecha separada. Si se necesita conservarla, antes de vaciar copiar
 ### Limitaciones
 
 - [ ] El aviso no bloquea escrituras. Un lock real requeriría decidir qué hacer
-  con Foldersync (archivos de lock sincronizados, latencia, falsos positivos) y
-  probablemente un modo solo-lectura. No implementar sin diseño.
-- [ ] `writer.json` se sincroniza con la bóveda si Foldersync copia `omega/`.
+  con el agente de sincronización (archivos de lock sincronizados, latencia,
+  falsos positivos) y probablemente un modo solo-lectura. No implementar sin
+  diseño.
+- [ ] `writer.json` se sincroniza con la bóveda si el agente copia `omega/`.
   Es intencional: sirve como señal, no como verdad absoluta.
 
 ---
 
 ## 8. Fase 7 — Prueba física pendiente (requiere teléfono)
 
-> No se puede completar sin un teléfono Android real y una cuenta de
-> Foldersync/Google Drive. Hacer esta fase al final, con la bóveda real
-> respaldada.
+> No se puede completar sin un teléfono Android real y una cuenta de un
+> proveedor de nube. Hacer esta fase al final, con la bóveda real respaldada.
 
 ### 8.1 Instalación de la APK de release
 
@@ -273,8 +273,8 @@ fecha separada. Si se necesita conservarla, antes de vaciar copiar
   debug instalada con otra firma, desinstalarla primero; eso borra los datos
   locales de la app, **no** la bóveda.
 - [ ] Instalar en el teléfono.
-- [ ] Abrir la app, elegir una carpeta bóveda local (no la carpeta virtual de
-  Google Drive), crear contraseña maestra y guardar el código de recuperación.
+- [ ] Abrir la app, elegir una carpeta bóveda local (no una carpeta virtual del
+  proveedor de nube), crear contraseña maestra y guardar el código de recuperación.
 - [ ] Cerrar y reabrir: debe pedir desbloqueo.
 - [ ] Probar desbloqueo con contraseña y con código de recuperación.
 - [ ] Crear un producto/pedido de prueba, cerrar la app y reabrir: los datos
@@ -290,20 +290,20 @@ fecha separada. Si se necesita conservarla, antes de vaciar copiar
 - [ ] Borrar una copia longlife con doble confirmación; confirmar que `omega/`
   no se tocó.
 
-### 8.3 Foldersync / Google Drive
+### 8.3 Agente de sincronización externo
 
-- [ ] En el teléfono, configurar Foldersync para sincronizar la carpeta bóveda
-  local con Drive (sincronización de archivos, no carpeta virtual).
-- [ ] En la PC, elegir la carpeta local espejo de Drive como bóveda.
+- [ ] En el teléfono, configurar el agente para sincronizar la carpeta bóveda
+  local con el proveedor de nube (sincronización de archivos, no carpeta virtual).
+- [ ] En la PC, elegir la carpeta local espejo del proveedor de nube como bóveda.
 - [ ] Confirmar que ambos ven el mismo `omega/keys/keyring.json` y el mismo
   `kid` en Ajustes > Cifrado.
 - [ ] **Un solo escritor:** cerrar la app en el teléfono antes de editar en la
-  PC, y viceversa. Esperar a que Foldersync/Drive terminen en ambas direcciones.
+  PC, y viceversa. Esperar a que el agente termine en ambas direcciones.
 - [ ] Crear un dato en la PC, esperar la sincronización, abrir en el teléfono y
   confirmar que aparece.
 - [ ] Crear un dato en el teléfono, esperar, abrir en la PC y confirmar.
 - [ ] Verificar que `longlife` también se sincroniza (o documentar si se
-  excluye de Foldersync).
+  excluye del agente).
 - [ ] Probar el aviso de `writer.json`: abrir en un equipo y, antes de 10
   minutos, abrir en el otro; debe advertir.
 
@@ -316,17 +316,17 @@ fecha separada. Si se necesita conservarla, antes de vaciar copiar
 | Desbloqueo con código | | | | |
 | Persistencia tras reinicio | | | | |
 | Longlife diario | | | | |
-| Foldersync subida | | | | |
-| Foldersync bajada | | | | |
+| Sincronización subida | | | | |
+| Sincronización bajada | | | | |
 | Aviso de dos escritores | | | | |
 | Export cifrado + import | | | | |
 
 ### 8.5 Problemas conocidos a vigilar
 
-- Si Android muestra una carpeta virtual de Drive, **no** elegirla como bóveda:
-  la app necesita archivos reales.
-- Si Foldersync reemplaza archivos, las dos copias convergen a una sola
-  versión; no hay merge automático de `.jsonl`.
+- Si Android muestra una carpeta virtual del proveedor de nube, **no** elegirla
+  como bóveda: la app necesita archivos reales.
+- Si el agente reemplaza archivos, las dos copias convergen a una sola versión;
+  no hay merge semántico de ediciones.
 - Si una build debug y una release conviven, la firma cambia y Android no
   actualiza: desinstalar primero.
 - El APK se guarda en `Descargas/InventarioTienda/`; la instalación es manual.
@@ -404,4 +404,19 @@ Resultados de esta tanda:
 - El workflow de release publica APK universal, AAB, AppImage, `.deb`, MSI,
   NSIS y `latest.json` firmado.
 - Pendiente después del release: instalar la APK en un teléfono físico y probar
-  Foldersync/Drive (sección 7).
+  un agente de sincronización externo (sección 7).
+
+---
+
+## 13. Release v0.3.0
+
+- Versión de la app: `0.3.0`.
+- Android: `versionName=0.3.0`, `versionCode=3000`.
+- Tag/release: `v0.3.0`.
+- Incluye robustez de sincronización externa (diario WAL, reparación, copias de
+  conflicto, huellas, append SAF y migraciones seguras) y restauración de
+  snapshots por dispositivo desde la app.
+- Detalle técnico: `docs/SYNC_ROBUSTNESS_CHECKLIST.md`.
+- Verificación: `npm run typecheck`, 59 tests TS, 77 tests Rust + 1 ignored,
+  `npm run build` y `cargo check` Android.
+- Pendiente: prueba física de la APK y de un agente de sincronización externo.

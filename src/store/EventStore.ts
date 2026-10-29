@@ -46,6 +46,12 @@ export interface EventStore {
 
   /** Borra todos los eventos persistidos (deja el store vacío). */
   clearAll(): Promise<void>;
+
+  /**
+   * Compara el diario local con la bóveda y re-agrega los eventos que hayan
+   * desaparecido por una sincronización externa. Es idempotente.
+   */
+  repair(): Promise<RepairReport>;
 }
 
 export interface ExportBundle {
@@ -54,6 +60,22 @@ export interface ExportBundle {
   exportedAt: number;
   deviceId: string;
   events: DomainEvent[];
+}
+
+/**
+ * Resultado de comparar el diario local (WAL) con la bóveda.
+ *
+ * `repaired` son eventos que faltaban en los archivos y se volvieron a
+ * agregar; `pending` los que no se pudieron recuperar; `stale` los cifrados
+ * con otra clave (no se re-agregan para no dejar datos ilegibles).
+ */
+export interface RepairReport {
+  repaired: number;
+  pending: number;
+  stale: number;
+  checked: number;
+  journalPath?: string | null;
+  errors: string[];
 }
 
 /** Nombre de archivo para un dominio. */

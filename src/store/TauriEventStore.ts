@@ -3,12 +3,27 @@ import { scheduleLonglifeSnapshot } from '../core/longlifeSnapshots';
 import {
   type EventStore,
   type ExportBundle,
+  type RepairReport,
   dedupeEvents,
   domainFile,
   parseEventLine,
   serializeEvents,
   sortEvents,
 } from './EventStore';
+
+interface FileFingerprint {
+  size: number;
+  mtime: number | null;
+}
+
+const EMPTY_REPAIR: RepairReport = {
+  repaired: 0,
+  pending: 0,
+  stale: 0,
+  checked: 0,
+  journalPath: null,
+  errors: [],
+};
 
 /**
  * Store respaldado por archivos .jsonl en el sistema de archivos.
@@ -22,7 +37,10 @@ export class TauriEventStore implements EventStore {
   private root: string | null = null;
   private listeners: Array<(domain: Domain) => void> = [];
   private pollTimer: number | null = null;
-  private lastSeen: Map<string, number> = new Map();
+  /** Huella (tamaño + mtime) por dominio, para detectar cambios externos. */
+  private lastFingerprints: Map<string, string> = new Map();
+  /** El primer chequeo solo llena la línea base; no dispara recargas. */
+  private pollInitialized = false;
 
   constructor(private rootPath?: string) {}
 
@@ -31,7 +49,6 @@ export class TauriEventStore implements EventStore {
       this.root = this.rootPath ?? (await this.invoke<string>('store_default_root'));
     }
     await this.invoke<void>('store_ensure_layout', { root: this.root });
-    this.startPolling();
   }
 
   setRoot(root: string): void {
@@ -53,8 +70,11 @@ export class TauriEventStore implements EventStore {
       domain,
       lines,
     });
-    this.lastSeen.set(domain, Date.now());
-    this.emit(domain);
+    // Registrar la huella de nuestra propia escritura para que el poller no la
+    // confunda con un cambio externo. No se emite al watcher: `App.emit` ya
+    // aplicó el evento de forma optimista y una recarga completa aquí podría
+    // pisar una edición concurrente.
+    await this.rememberFingerprints(domain);
     scheduleLonglifeSnapshot();
   }
 
@@ -91,6 +111,10 @@ export class TauriEventStore implements EventStore {
 
   async watch(callback: (domain: Domain) => void): Promise<void> {
     this.listeners.push(callback);
+    // Arrancar el poller recién ahora: `App.init` ya reparó y leyó la bóveda,
+    // así que las huellas iniciales están registradas y el primer chequeo no
+    // se confunde con un cambio externo.
+    this.startPolling();
   }
 
   async unwatch(): Promise<void> {
@@ -162,7 +186,7 @@ export class TauriEventStore implements EventStore {
       );
     }
     await this.invoke<void>('store_clear', { root: this.root });
-    this.lastSeen.clear();
+    this.lastFingerprints.clear();
     // No se programa un snapshot después del borrado: el refresco automático
     // no debe reemplazar la copia del día con un estado vacío.
   }
@@ -176,20 +200,78 @@ export class TauriEventStore implements EventStore {
     this.pollTimer = window.setInterval(async () => {
       if (!this.root) return;
       try {
-        const stamps = await this.invoke<Record<string, number>>('store_mtimes', { root: this.root });
-        for (const [domain, mtime] of Object.entries(stamps)) {
-          const prev = this.lastSeen.get(domain);
-          if (prev !== undefined && mtime > prev) {
-            this.lastSeen.set(domain, mtime);
-            this.emit(domain as Domain);
-          } else if (prev === undefined) {
-            this.lastSeen.set(domain, mtime);
+        const stamps = await this.invoke<Record<string, FileFingerprint>>(
+          'store_fingerprints',
+          { root: this.root },
+        );
+        const changed: Domain[] = [];
+        const seen = new Set<string>();
+        for (const [domain, fp] of Object.entries(stamps)) {
+          seen.add(domain);
+          const key = JSON.stringify(fp);
+          const prev = this.lastFingerprints.get(domain);
+          // `undefined` = archivo nuevo: también es un cambio que hay que leer.
+          if (prev !== key && this.pollInitialized) changed.push(domain as Domain);
+          this.lastFingerprints.set(domain, key);
+        }
+        // Un dominio que desapareció también es un cambio: el agente pudo
+        // reemplazar el archivo por una versión anterior.
+        for (const domain of [...this.lastFingerprints.keys()]) {
+          if (!seen.has(domain)) {
+            if (this.pollInitialized) changed.push(domain as Domain);
+            this.lastFingerprints.delete(domain);
           }
         }
+        this.pollInitialized = true;
+        for (const domain of changed) this.emit(domain);
       } catch {
         /* la carpeta puede estar brevemente inaccesible (otra app escribiendo) */
       }
     }, 3000);
+  }
+
+  /**
+   * Compara el diario local con la bóveda y re-agrega lo que falte.
+   *
+   * Se llama al arrancar y cada vez que el poller detecta un cambio externo.
+   * También refresca las huellas para que la propia reparación no se lea como
+   * un cambio externo.
+   */
+  async repair(): Promise<RepairReport> {
+    if (!this.root) return { ...EMPTY_REPAIR };
+    try {
+      const report = await this.invoke<RepairReport>('journal_repair', { root: this.root });
+      // Si se recuperaron eventos, programar una copia longlife para que el
+      // estado reparado quede respaldado.
+      if (report.repaired > 0) scheduleLonglifeSnapshot();
+      return report;
+    } finally {
+      // Aunque la reparación falle (por ejemplo, bóveda bloqueada), registrar
+      // las huellas evita que el poller entre en un bucle de recargas.
+      await this.rememberFingerprints();
+    }
+  }
+
+  private async rememberFingerprints(domain?: Domain): Promise<void> {
+    if (!this.root) return;
+    try {
+      const stamps = await this.invoke<Record<string, FileFingerprint>>(
+        'store_fingerprints',
+        { root: this.root },
+      );
+      if (domain) {
+        const fp = stamps[domain];
+        if (fp) this.lastFingerprints.set(domain, JSON.stringify(fp));
+        else this.lastFingerprints.delete(domain);
+        return;
+      }
+      this.lastFingerprints.clear();
+      for (const [name, fp] of Object.entries(stamps)) {
+        this.lastFingerprints.set(name, JSON.stringify(fp));
+      }
+    } catch {
+      /* best effort: el próximo poll vuelve a intentar */
+    }
   }
 
   private emit(domain: Domain): void {

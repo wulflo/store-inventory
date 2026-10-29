@@ -339,12 +339,22 @@ export function createShell(root: HTMLElement, app: App): Shell {
   app.subscribe((event) => {
     if (event.type === 'state') {
       refresh();
-      if (event.reason === 'rebuild' || event.reason.startsWith('external:')) {
+      if (event.reason === 'rebuild' || event.reason.startsWith('external')) {
         requestViewRefresh();
       }
     }
     if (event.type === 'error') toast(event.message, { kind: 'error' });
+    if (event.type === 'status') {
+      toast(event.message, { kind: 'warning', duration: 12000 });
+    }
   });
+
+  // Si la reparación ocurrió antes de que la UI se suscribiera (arranque),
+  // mostrar el aviso ahora que hay dónde mostrarlo.
+  if (app.startupNotice) {
+    toast(app.startupNotice, { kind: 'warning', duration: 12000 });
+    app.startupNotice = null;
+  }
 
   /* FAB de acción principal (Material Design 3). En compacto es el punto
      de entrada principal; en medio/expandido coexiste con el topbar. */

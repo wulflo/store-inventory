@@ -402,7 +402,7 @@ pub fn append_event_encrypted(
   km: &KeyMaterial,
 ) -> Result<(), String> {
   let line = encrypt_event_line(event_json, km)?;
-  crate::event_store::store_append(root.to_string(), domain.to_string(), vec![line])
+  crate::event_store::append_encrypted_line(root, domain, &line)
 }
 
 /// Lee y descifra todas las líneas del archivo de dominio con la clave actual.
@@ -470,19 +470,87 @@ fn line_encrypted_with(line: &str, kid: &str) -> bool {
     .unwrap_or(false)
 }
 
+/// Nombre único para una copia de conflicto dentro del mismo directorio.
+///
+/// El resultado empieza con el nombre del dominio (`orders...`), así que
+/// `event_store::domain_files` lo incluye al leer.
+fn conflict_relative(relative: &str, tag: &str, stamp: u128, attempt: usize) -> String {
+  let (dir, name) = match relative.rsplit_once('/') {
+    Some((dir, name)) => (dir, name),
+    None => ("", relative),
+  };
+  let stem = name.strip_suffix(".jsonl").unwrap_or(name);
+  let suffix = if attempt == 0 {
+    format!("{tag}-{stamp}")
+  } else {
+    format!("{tag}-{stamp}-{attempt}")
+  };
+  let candidate = format!("{stem}.{suffix}.jsonl");
+  if dir.is_empty() {
+    candidate
+  } else {
+    format!("{dir}/{candidate}")
+  }
+}
+
+/// Guarda `bytes` como copia de conflicto junto a `relative`.
+///
+/// Se usa cuando un agente externo cambió un archivo durante una migración o
+/// una restauración: la versión externa no se pierde y `store_read` la fusiona
+/// con la versión canónica.
+fn write_conflict_copy(
+  root: &str,
+  relative: &str,
+  tag: &str,
+  bytes: &[u8],
+) -> Result<String, String> {
+  let stamp = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_millis())
+    .unwrap_or(0);
+  for attempt in 0..100 {
+    let candidate = conflict_relative(relative, tag, stamp, attempt);
+    if storage::read_bytes(root, &candidate)?.is_some() {
+      continue;
+    }
+    storage::write_bytes(root, &candidate, bytes)?;
+    return Ok(candidate);
+  }
+  Err(format!(
+    "No se pudo crear una copia de conflicto para '{relative}'."
+  ))
+}
+
+/// Preserva el contenido actual de `relative` como copia de conflicto.
+fn preserve_current(root: &str, relative: &str, tag: &str) -> Result<Option<String>, String> {
+  let Some(bytes) = storage::read_bytes(root, relative)? else {
+    return Ok(None);
+  };
+  write_conflict_copy(root, relative, tag, &bytes).map(Some)
+}
+
 /// Restaura los eventos desde un respaldo creado por `backup_events`.
 ///
 /// Se usa para revertir una migración que falló a mitad de camino. Cada archivo
 /// se escribe de forma atómica en local, para no dejar un `.jsonl` truncado.
+/// Si el archivo actual difiere del respaldo (migración parcial o cambio
+/// externo), se preserva antes como copia de conflicto.
 fn restore_events(root: &str, backup_dir: &str) -> Result<usize, String> {
   let mut restored = 0usize;
   for name in storage::list_dir(root, backup_dir)? {
     if !name.ends_with(".jsonl") {
       continue;
     }
-    let bytes = storage::read_bytes(root, &format!("{backup_dir}/{name}"))?
+    let backup_rel = format!("{backup_dir}/{name}");
+    let bytes = storage::read_bytes(root, &backup_rel)?
       .ok_or_else(|| format!("No se encontró el respaldo de '{name}'."))?;
-    storage::write_atomic(root, &format!("events/{name}"), &bytes)
+    let target = format!("events/{name}");
+    if let Some(current) = storage::read_bytes(root, &target)? {
+      if current != bytes {
+        write_conflict_copy(root, &target, "restore", &current)?;
+      }
+    }
+    storage::write_atomic(root, &target, &bytes)
       .map_err(|e| format!("No se pudo restaurar '{name}': {e}"))?;
     restored += 1;
   }
@@ -495,11 +563,27 @@ fn migrate_files(
   from: Option<&KeyMaterial>,
   to: &KeyMaterial,
 ) -> Result<(usize, usize), String> {
+  migrate_files_impl(root, from, to, &mut |_| {})
+}
+
+/// Implementación con un hook de test entre la lectura y la transformación.
+fn migrate_files_impl(
+  root: &str,
+  from: Option<&KeyMaterial>,
+  to: &KeyMaterial,
+  after_read: &mut dyn FnMut(&str),
+) -> Result<(usize, usize), String> {
   let mut total_events = 0usize;
   let mut files = 0usize;
   for relative in jsonl_files(root)? {
+    // Huella ANTES de leer: si el agente de sync reemplaza el archivo entre la
+    // lectura y la escritura, abortamos sin pisar su versión.
+    let before = storage::fingerprint(root, &relative)?;
     let text = storage::read_string(root, &relative)?
       .ok_or_else(|| format!("No se encontró '{relative}'."))?;
+    // Hook de test: simula un agente externo que escribe después de la lectura.
+    after_read(&relative);
+
     let mut out = String::with_capacity(text.len() + 256);
     let mut count = 0usize;
     for line in text.lines() {
@@ -527,6 +611,19 @@ fn migrate_files(
       out.push('\n');
       count += 1;
     }
+
+    let after = storage::fingerprint(root, &relative)?;
+    if before != after {
+      let preserved = preserve_current(root, &relative, "external")?;
+      return Err(format!(
+        "El archivo '{relative}' cambió durante la migración (¿un agente de sincronización externo?). \
+         Se abortó sin sobrescribirlo{}.",
+        preserved
+          .map(|p| format!("; la versión externa quedó en '{p}'"))
+          .unwrap_or_default()
+      ));
+    }
+
     if count > 0 {
       storage::write_atomic(root, &relative, out.as_bytes())?;
       total_events += count;
@@ -628,6 +725,9 @@ pub fn crypto_enable(root: String, password: String) -> Result<EnableResult, Str
              El respaldo está en {backup_dir}."
           ));
         }
+        // Las líneas del diario ya no coinciden con la clave nueva; la bóveda
+        // fue reescrita y respaldada, así que se puede limpiar.
+        crate::journal::clear_for_root(&root);
         (backup_dir, files, events)
       }
       Err(e) => {
@@ -802,6 +902,7 @@ pub fn crypto_rotate(
                El respaldo está en {backup_dir}."
             ));
           }
+          crate::journal::clear_for_root(&root);
           (backup_dir, files, events)
         }
         Err(e) => {
@@ -969,6 +1070,7 @@ pub fn crypto_import_keyring(
              El respaldo está en {backup_dir}."
           ));
         }
+        crate::journal::clear_for_root(&root);
         (backup_dir, files, events)
       }
       Err(e) => {
@@ -1051,6 +1153,7 @@ pub fn crypto_adopt_keyring(
                El respaldo está en {backup_dir}."
             ));
           }
+          crate::journal::clear_for_root(&root);
           (backup_dir, files, events)
         }
         Err(e) => {
@@ -1383,7 +1486,7 @@ mod tests {
   fn raw_export_keeps_payloads_encrypted() {
     let root = temp_root("raw-export");
     crypto_enable(root.clone(), "contraseña-segura".to_string()).unwrap();
-    crate::event_store::store_append(
+    crate::event_store::store_append_no_journal(
       root.clone(),
       "orders".to_string(),
       vec![sample_event("evt-1", "Order.Created")],
@@ -1440,6 +1543,54 @@ mod tests {
     let text = fs::read_to_string(Path::new(&root).join("events/orders.jsonl")).unwrap();
     assert!(text.contains("Ana Gómez"));
 
+    // El archivo parcial no se descarta: queda como copia de conflicto para
+    // que el usuario pueda inspeccionarlo.
+    let names: Vec<String> = fs::read_dir(Path::new(&root).join("events"))
+      .unwrap()
+      .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+      .collect();
+    let conflict = names
+      .iter()
+      .find(|n| n.starts_with("orders.restore-"))
+      .expect("copia de conflicto de la restauración");
+    let copy = fs::read_to_string(Path::new(&root).join("events").join(conflict)).unwrap();
+    assert!(copy.contains("\"roto\":true"));
+
+    let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn migrate_files_aborts_and_preserves_an_external_change() {
+    let root = temp_root("migrate-conflict");
+    let domain = "orders";
+    write_plain_event(&root, domain, &sample_event("evt-1", "Order.Created"));
+    let key = km("clave-de-prueba", &root);
+    let external = format!("{}\n", sample_event("evt-external", "Order.Created"));
+
+    let err = migrate_files_impl(&root, None, &key, &mut |relative| {
+      if relative == "events/orders.jsonl" {
+        fs::write(Path::new(&root).join(relative), &external).unwrap();
+      }
+    })
+    .unwrap_err();
+
+    assert!(err.contains("cambió durante la migración"), "mensaje: {err}");
+    // El archivo original conserva la versión externa: no se sobrescribió.
+    let current = fs::read_to_string(Path::new(&root).join("events/orders.jsonl")).unwrap();
+    assert_eq!(current, external);
+
+    // Y queda una copia de conflicto con el mismo contenido.
+    let names: Vec<String> = fs::read_dir(Path::new(&root).join("events"))
+      .unwrap()
+      .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+      .collect();
+    let conflict = names
+      .iter()
+      .find(|n| n.starts_with("orders.external-"))
+      .expect("copia de conflicto externa");
+    let copy = fs::read_to_string(Path::new(&root).join("events").join(conflict)).unwrap();
+    assert_eq!(copy, external);
+
     let _ = fs::remove_dir_all(&root);
   }
 
@@ -1450,7 +1601,7 @@ mod tests {
     let domain = "orders";
     let id = "evt-transparent";
 
-    crate::event_store::store_append(
+    crate::event_store::store_append_no_journal(
       root.clone(),
       domain.to_string(),
       vec![sample_event(id, "Order.Created")],
@@ -1479,7 +1630,7 @@ mod tests {
       .unwrap_err();
     assert!(read_err.starts_with(LOCKED_PREFIX));
 
-    let write_err = crate::event_store::store_append(
+    let write_err = crate::event_store::store_append_no_journal(
       root.clone(),
       "orders".to_string(),
       vec![sample_event("evt-1", "Order.Created")],
@@ -1498,7 +1649,7 @@ mod tests {
     keys::save(&root, &created.keyring).unwrap();
     set_current(&root, created.key, created.keyring.kid.clone());
     let domain = "orders";
-    crate::event_store::store_append(
+    crate::event_store::store_append_no_journal(
       root.clone(),
       domain.to_string(),
       vec![sample_event("evt-1", "Order.Created")],
@@ -1522,7 +1673,7 @@ mod tests {
     keys::save(&root, &created.keyring).unwrap();
     set_current(&root, created.key, created.keyring.kid.clone());
     let domain = "orders";
-    crate::event_store::store_append(
+    crate::event_store::store_append_no_journal(
       root.clone(),
       domain.to_string(),
       vec![sample_event("evt-1", "Order.Created")],
@@ -1697,7 +1848,7 @@ mod tests {
     keys::save(&root_a, &created.keyring).unwrap();
     set_current(&root_a, created.key, created.keyring.kid.clone());
     let domain = "orders";
-    crate::event_store::store_append(
+    crate::event_store::store_append_no_journal(
       root_a.clone(),
       domain.to_string(),
       vec![sample_event("evt-1", "Order.Created")],
@@ -1749,7 +1900,7 @@ mod tests {
     assert_eq!(state_a.kid.as_deref(), Some(rotated.kid.as_str()));
 
     // B puede escribir con la clave nueva y A lo lee (mismo llavero).
-    crate::event_store::store_append(
+    crate::event_store::store_append_no_journal(
       root_b.clone(),
       domain.to_string(),
       vec![sample_event("evt-2", "Order.Created")],

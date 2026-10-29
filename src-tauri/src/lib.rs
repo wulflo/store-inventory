@@ -3,6 +3,7 @@
 mod backup;
 mod crypto;
 mod event_store;
+mod journal;
 mod keys;
 mod storage;
 mod updater;
@@ -11,7 +12,10 @@ mod writer;
 #[cfg(target_os = "android")]
 mod android_fs;
 
-use event_store::{store_append, store_clear, store_device_id, store_ensure_layout, store_export_raw, store_mtimes, store_read};
+use event_store::{
+  store_append, store_clear, store_device_id, store_ensure_layout, store_export_raw,
+  store_fingerprints, store_mtimes, store_read,
+};
 use tauri::{AppHandle, Manager};
 
 /* ------------------------------------------------------------------ */
@@ -73,8 +77,12 @@ pub fn run() {
       store_append,
       store_read,
       store_mtimes,
+      store_fingerprints,
       store_device_id,
       store_export_raw,
+      journal::journal_repair,
+      journal::journal_status,
+      journal::journal_clear,
       writer::installation_device_id,
       writer::writer_touch,
       vault::vault_status,
@@ -83,6 +91,7 @@ pub fn run() {
       backup::longlife_status,
       backup::longlife_list,
       backup::longlife_run,
+      backup::longlife_restore,
       backup::longlife_delete,
       updater::cmd_updater_check,
       updater::cmd_updater_install,

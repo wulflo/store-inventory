@@ -3,7 +3,7 @@
  *
  * La copia del día no se regenera en cada evento: se espera un breve periodo
  * de calma después del último cambio. Así se evita copiar `omega` completo
- * muchas veces seguidas y, en Android, se reduce el tráfico de Foldersync.
+ * muchas veces seguidas y, en Android, se reduce el tráfico del agente de sincronización.
  *
  * También se fuerza el refresco al iniciar, cada 24 h, al pasar la app a
  * segundo plano y al cerrar la ventana de escritorio.

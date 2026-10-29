@@ -10,6 +10,7 @@
 
 #[cfg(target_os = "android")]
 use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "android")]
 use std::sync::Mutex;
@@ -27,12 +28,17 @@ pub fn init_app(app: AppHandle) {
   let _ = APP_HANDLE.set(app);
 }
 
+/// `AppHandle` guardado en `init_app`, si ya está disponible.
+///
+/// Lo usan el diario local y las operaciones que necesitan resolver el
+/// directorio privado de la app (fuera de la bóveda).
+pub(crate) fn app_handle() -> Option<AppHandle> {
+  APP_HANDLE.get().cloned()
+}
+
 #[cfg(target_os = "android")]
-fn app_handle() -> Result<AppHandle, String> {
-  APP_HANDLE
-    .get()
-    .cloned()
-    .ok_or_else(|| "El almacenamiento SAF todavía no está inicializado.".to_string())
+fn android_app_handle() -> Result<AppHandle, String> {
+  app_handle().ok_or_else(|| "El almacenamiento SAF todavía no está inicializado.".to_string())
 }
 
 /// `true` si la raíz es un `DirPath` SAF serializado.
@@ -89,7 +95,15 @@ struct SafCtx {
   root: DirPath,
   files: BTreeMap<String, FilePath>,
   dirs: BTreeMap<String, DirPath>,
+  /// Última vez que se releyó el árbol SAF. Un agente externo puede
+  /// reemplazar documentos (borrar + crear) y dejar URIs viejas; refrescar
+  /// con TTL evita leer/escribir el documento equivocado sin escanear en cada
+  /// operación.
+  last_refresh: Option<std::time::Instant>,
 }
+
+#[cfg(target_os = "android")]
+const SAF_INDEX_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[cfg(target_os = "android")]
 impl SafCtx {
@@ -98,7 +112,15 @@ impl SafCtx {
       root,
       files: BTreeMap::new(),
       dirs: BTreeMap::new(),
+      last_refresh: None,
     }
+  }
+
+  fn index_is_fresh(&self) -> bool {
+    self
+      .last_refresh
+      .map(|t| t.elapsed() < SAF_INDEX_TTL)
+      .unwrap_or(false)
   }
 
   fn scan(
@@ -112,7 +134,7 @@ impl SafCtx {
     if depth > 64 {
       return Err("La bóveda SAF tiene demasiados niveles de carpetas.".to_string());
     }
-    let app = app_handle()?;
+    let app = android_app_handle()?;
     let api = app.android_fs();
     let entries = api.read_dir(dir).map_err(|e| e.to_string())?;
     for (name, entry) in entries {
@@ -143,6 +165,7 @@ impl SafCtx {
     self.scan(&self.root, "", 0, &mut files, &mut dirs)?;
     self.files = files;
     self.dirs = dirs;
+    self.last_refresh = Some(std::time::Instant::now());
     Ok(())
   }
 
@@ -152,7 +175,9 @@ impl SafCtx {
       return Ok(None);
     }
     if let Some(path) = self.files.get(&relative) {
-      return Ok(Some(path.clone()));
+      if self.index_is_fresh() {
+        return Ok(Some(path.clone()));
+      }
     }
     self.refresh()?;
     Ok(self.files.get(&relative).cloned())
@@ -182,7 +207,7 @@ impl SafCtx {
     if let Ok(path) = self.dir_path(&relative) {
       return Ok(path);
     }
-    let app = app_handle()?;
+    let app = android_app_handle()?;
     let api = app.android_fs();
     let marker_file = format!(
       ".keep-{}",
@@ -223,7 +248,7 @@ impl SafCtx {
     let Some(path) = self.file_path(relative)? else {
       return Ok(None);
     };
-    let app = app_handle()?;
+    let app = android_app_handle()?;
     let api = app.android_fs();
     api
       .read(&path)
@@ -236,14 +261,19 @@ impl SafCtx {
     if relative.is_empty() {
       return Err("No se puede escribir en la raíz de la bóveda.".to_string());
     }
+    // Los archivos de eventos pueden haber sido reemplazados por un agente de
+    // sync: no escribir sobre una URI vieja.
+    if relative.starts_with("events/") {
+      self.refresh()?;
+    }
     if let Some(path) = self.file_path(&relative)? {
-      let app = app_handle()?;
+      let app = android_app_handle()?;
       let api = app.android_fs();
       return api
         .write(&path, bytes)
         .map_err(|e| format!("No se pudo escribir '{relative}': {e}"));
     }
-    let app = app_handle()?;
+    let app = android_app_handle()?;
     let api = app.android_fs();
     let path = api
       .new_file_with_contents(&self.root, &relative, Some(mime_for(&relative)), bytes)
@@ -253,16 +283,26 @@ impl SafCtx {
   }
 
   fn append_bytes(&mut self, relative: &str, bytes: &[u8]) -> Result<(), String> {
-    let mut current = self.read_bytes(relative)?.unwrap_or_default();
-    current.extend_from_slice(bytes);
-    self.write_bytes(relative, &current)
+    let relative = normalize(relative)?;
+    if relative.is_empty() {
+      return Err("No se puede escribir en la raíz de la bóveda.".to_string());
+    }
+    // Forzar un índice fresco: si el agente de sync reemplazó el documento,
+    // la URI cacheada apuntaría al archivo viejo.
+    self.refresh()?;
+    if let Some(path) = self.files.get(&relative).cloned() {
+      let uri = tauri_plugin_android_fs::convert_file_path_to_string(&path);
+      return crate::android_fs::append_saf_file(&uri, bytes);
+    }
+    // No existe todavía: crearlo con el contenido (no hay nada que appendear).
+    self.write_bytes(&relative, bytes)
   }
 
   fn remove_file(&mut self, relative: &str) -> Result<(), String> {
     let Some(path) = self.file_path(relative)? else {
       return Ok(());
     };
-    let app = app_handle()?;
+    let app = android_app_handle()?;
     let api = app.android_fs();
     api
       .remove_file(&path)
@@ -273,7 +313,7 @@ impl SafCtx {
 
   fn list_dir(&mut self, relative: &str) -> Result<Vec<String>, String> {
     let dir = self.dir_path(relative)?;
-    let app = app_handle()?;
+    let app = android_app_handle()?;
     let api = app.android_fs();
     let entries = api.read_dir(&dir).map_err(|e| e.to_string())?;
     let prefix = normalize(relative)?;
@@ -367,6 +407,27 @@ pub fn read_string(root: &str, relative: &str) -> Result<Option<String>, String>
       .map_err(|e| format!("El archivo '{relative}' no es texto UTF-8 válido: {e}")),
     None => Ok(None),
   }
+}
+
+/// Fuerza a releer el índice SAF. En escritorio no hace nada.
+///
+/// Se usa antes de una reparación para no comparar contra URIs viejas.
+pub fn refresh_index(root: &str) -> Result<(), String> {
+  if is_saf(root) {
+    #[cfg(target_os = "android")]
+    {
+      let mut guard = saf_context(root)?;
+      let ctx = guard
+        .get_mut(root)
+        .ok_or_else(|| "No se pudo abrir la bóveda SAF.".to_string())?;
+      return ctx.refresh();
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+      return Err("La bóveda SAF solo está disponible en Android.".to_string());
+    }
+  }
+  Ok(())
 }
 
 pub fn exists(root: &str, relative: &str) -> Result<bool, String> {
@@ -633,9 +694,52 @@ pub fn rename(root: &str, from: &str, to: &str) -> Result<(), String> {
   std::fs::rename(&from, &to).map_err(|e| format!("No se pudo mover {from:?} a {to:?}: {e}"))
 }
 
-pub fn mtime_ms(root: &str, relative: &str) -> Result<Option<u64>, String> {
+/// Huella barata de un archivo: tamaño + mtime.
+///
+/// Sirve para detectar cambios externos (agentes de sincronización) sin leer
+/// el contenido completo. En SAF se obtiene abriendo el descriptor y leyendo
+/// `metadata()`: el plugin no expone `lastModified` directamente, pero el fd
+/// soporta `fstat`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileFingerprint {
+  pub size: u64,
+  pub mtime: Option<u64>,
+}
+
+pub fn fingerprint(root: &str, relative: &str) -> Result<Option<FileFingerprint>, String> {
   if is_saf(root) {
-    return Ok(None);
+    #[cfg(target_os = "android")]
+    {
+      let mut guard = saf_context(root)?;
+      let ctx = guard
+        .get_mut(root)
+        .ok_or_else(|| "No se pudo abrir la bóveda SAF.".to_string())?;
+      let Some(path) = ctx.file_path(relative)? else {
+        return Ok(None);
+      };
+      let app = android_app_handle()?;
+      let api = app.android_fs();
+      let file = api
+        .open_file(&path)
+        .map_err(|e| format!("No se pudo abrir '{relative}' para leer su huella: {e}"))?;
+      let metadata = file
+        .metadata()
+        .map_err(|e| format!("No se pudo leer la huella de '{relative}': {e}"))?;
+      let mtime = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+      return Ok(Some(FileFingerprint {
+        size: metadata.len(),
+        mtime,
+      }));
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+      return Err("La bóveda SAF solo está disponible en Android.".to_string());
+    }
   }
   let path = local_path(root, relative)?;
   let metadata = match std::fs::metadata(&path) {
@@ -643,13 +747,19 @@ pub fn mtime_ms(root: &str, relative: &str) -> Result<Option<u64>, String> {
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
     Err(e) => return Err(format!("No se pudo leer {path:?}: {e}")),
   };
-  let modified = metadata
+  let mtime = metadata
     .modified()
-    .map_err(|e| format!("No se pudo leer la fecha de {path:?}: {e}"))?;
-  Ok(modified
-    .duration_since(std::time::UNIX_EPOCH)
     .ok()
-    .map(|d| d.as_millis() as u64))
+    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+    .map(|d| d.as_millis() as u64);
+  Ok(Some(FileFingerprint {
+    size: metadata.len(),
+    mtime,
+  }))
+}
+
+pub fn mtime_ms(root: &str, relative: &str) -> Result<Option<u64>, String> {
+  Ok(fingerprint(root, relative)?.and_then(|f| f.mtime))
 }
 
 #[cfg(test)]

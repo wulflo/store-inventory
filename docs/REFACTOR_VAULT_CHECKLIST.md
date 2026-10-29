@@ -29,9 +29,10 @@
 ## 2. Decisiones de arquitectura (no cambiar sin registrar el motivo)
 
 - **Primitivas estándar:** Argon2id + XChaCha20-Poly1305 + llavero envuelto.
-  No inventar formatos propietarios. No afirmar compatibilidad con VeraCrypt:
-  VeraCrypt cifra contenedores completos, no JSONL a nivel de evento. Lo
-  portable es el **llavero** (`keyring.json`) y el algoritmo documentado.
+  No inventar formatos cerrados ni prometer compatibilidad con bóvedas de
+  terceros: esos formatos cifran contenedores completos, no JSONL a nivel de
+  evento. Lo portable es el **llavero** (`keyring.json`) y el algoritmo
+  documentado.
 - **Raíz de datos:** `<bóveda>/omega`. Todos los comandos que hoy reciben
   `root` reciben la raíz de datos (`omega`).
 - **Bóveda:** `<bóveda>` se guarda aparte, en el directorio privado de la app
@@ -290,7 +291,7 @@ npx tauri android build --debug --apk --target aarch64
   ven al reiniciar.
 - **El llavero viaja en `omega/keys/keyring.json`:** por eso otra persona con
   la misma carpeta y contraseña puede abrir los datos.
-- **VeraCrypt:** no prometer compatibilidad de contenedor. El formato portátil
+- **Bóvedas de terceros:** no prometer compatibilidad de contenedor. El formato portátil
   es el llavero + Argon2id/XChaCha20-Poly1305 documentado.
 - **No borrar** `docs/KEYSTORES.md`, `scripts/sign-local.sh`,
   `scripts/verify-signing.sh` (untracked del usuario).
@@ -326,28 +327,40 @@ npx tauri android build --debug --apk --target aarch64
   `latest.json` (con firma para `android-universal`, `linux-x86_64` y
   `windows-x86_64`).
 - Pendiente: probar la APK de release en un teléfono físico y luego la
-  sincronización real con Foldersync/Google Drive entre teléfono y PC.
-- Siguiente release: `v0.2.13` (limitaciones de `v0.2.12` resueltas). Ver
-  `docs/LIMITACIONES_CHECKLIST.md` y `docs/PROGRESO.md` §18.
+  sincronización real con un agente externo entre teléfono y PC.
+- Siguiente release: `v0.3.0` (robustez de sincronización externa y
+  restauración por dispositivo). Ver `docs/SYNC_ROBUSTNESS_CHECKLIST.md` y
+  `docs/PROGRESO.md` §19.
 
 ## 9. Sincronización externa de la bóveda
 
-La app **no** sincroniza por red. Google Drive + Foldersync (o Syncthing, etc.)
-es una forma válida de compartir la bóveda, pero es sincronización de archivos,
-no sync en vivo:
+La app **no** sincroniza por red. Un agente de sincronización externo (o un
+proveedor de nube) es una forma válida de compartir la bóveda, pero es
+sincronización de archivos, no sync en vivo:
 
-- En Android, elegir en la app una carpeta **local** que Foldersync sincronice
-  con Drive. No elegir la carpeta virtual del proveedor de Google Drive.
-- En la PC, elegir la carpeta local espejo de Google Drive.
+- En Android, elegir en la app una carpeta **local** que el agente sincronice
+  con el proveedor de nube. No elegir una carpeta virtual del proveedor.
+- En la PC, elegir la carpeta local espejo del proveedor de nube.
 - Usar la misma contraseña maestra o código de recuperación. El llavero viaja
   dentro de `<bóveda>/omega/keys/keyring.json`.
 - **Un solo equipo escribe a la vez.** Cerrar la app antes de sincronizar y
-  esperar a que Foldersync/Drive terminen en ambas direcciones.
-- Si Foldersync reemplaza el archivo, las dos copias convergen a una sola
-  versión: se descarta lo editado en la otra. Si en cambio crea una copia de
-  conflicto, la app no la lee. No hay merge automático de `.jsonl`.
-- Esa política de reemplazo puede ser aceptable si se edita en un solo equipo
-  por vez y se usa el historial de versiones de Drive para recuperar. No evita
-  la pérdida de eventos si los dos equipos editaron entre sincronizaciones.
+  esperar a que el agente termine en ambas direcciones.
+- Si el agente reemplaza el archivo, las dos copias convergen a una sola
+  versión: se descarta lo editado en la otra. Si crea una copia de conflicto,
+  la app la lee y deduplica por `id`; no hay merge semántico de ediciones.
+- El diario local y las copias de conflicto reducen la pérdida, pero no
+  reemplazan la regla de un solo escritor. Si los dos equipos editaron entre
+  sincronizaciones, hay que revisar longlife y el historial de versiones del
+  proveedor de nube.
 - `longlife` también se sincroniza si está dentro de la bóveda. Si se excluye
-  de Foldersync, no habrá copias longlife en la nube.
+  del agente, no habrá copias longlife en la nube.
+
+## 10. Release v0.3.0 (2026-10-28)
+
+- Versión de la app: `0.3.0`; Android `versionName=0.3.0`, `versionCode=3000`.
+- Tag/release: `v0.3.0`.
+- Incluye diario local WAL, reparación, copias de conflicto, huellas, append
+  real en SAF, migraciones de cifrado seguras, snapshots por dispositivo y
+  restauración desde la app.
+- Detalle y verificación en `docs/SYNC_ROBUSTNESS_CHECKLIST.md` §9.5.
+- Pendiente: prueba física en Android con un agente de sincronización externo.

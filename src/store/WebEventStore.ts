@@ -2,10 +2,20 @@ import type { Domain, DomainEvent } from '../core/types';
 import {
   type EventStore,
   type ExportBundle,
+  type RepairReport,
   parseEventLine,
   serializeEvents,
   sortEvents,
 } from './EventStore';
+
+const NO_REPAIR: RepairReport = {
+  repaired: 0,
+  pending: 0,
+  stale: 0,
+  checked: 0,
+  journalPath: null,
+  errors: [],
+};
 import { DOMAIN_LIST, domainForEventType } from './TauriEventStore';
 
 /**
@@ -141,6 +151,11 @@ export class WebEventStore implements EventStore {
     this.listeners.forEach((l) => {});
   }
 
+  /** En OPFS no hay agente de sync externo: no hay nada que reparar. */
+  async repair(): Promise<RepairReport> {
+    return { ...NO_REPAIR };
+  }
+
   private emit(domain: Domain): void {
     for (const l of this.listeners) l(domain);
   }
@@ -210,6 +225,10 @@ export class MemoryEventStore implements EventStore {
 
   async clearAll(): Promise<void> {
     this.data.clear();
+  }
+
+  async repair(): Promise<RepairReport> {
+    return { ...NO_REPAIR };
   }
 
   private emit(domain: Domain): void {

@@ -1,6 +1,108 @@
 use jni::objects::{JClass, JObject, JValue};
 
 /* ------------------------------------------------------------------ */
+/* Append real sobre un documento SAF                                 */
+/* ------------------------------------------------------------------ */
+
+/// Abre un documento SAF en modo `"wa"` (write + append) y escribe `bytes`.
+///
+/// En Android `"w"` trunca el archivo; `"wa"` agrega sin reescribirlo. Esto
+/// evita el read-modify-write que podía pisar lo que un agente de sync
+/// externo acababa de dejar en la carpeta.
+///
+/// `uri` es el string de un `FilePath` del plugin. Si el documento fue
+/// reemplazado y la URI vieja ya no existe, la llamada falla sin escribir: el
+/// diario local se encarga de reparar el evento en la próxima pasada.
+pub fn append_saf_file(uri: &str, bytes: &[u8]) -> Result<(), String> {
+  let ctx = ndk_context::android_context();
+  let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
+    .map_err(|e| format!("No se pudo obtener JavaVM: {e}"))?;
+  let mut env = vm
+    .attach_current_thread()
+    .map_err(|e| format!("No se pudo adjuntar hilo: {e}"))?;
+  let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+  let result: Result<(), String> = (|| {
+    let resolver = env
+      .call_method(
+        &context,
+        "getContentResolver",
+        "()Landroid/content/ContentResolver;",
+        &[],
+      )
+      .map_err(|e| format!("No se pudo obtener ContentResolver: {e}"))?
+      .l()
+      .map_err(|e| format!("ContentResolver inválido: {e}"))?;
+
+    let uri_string = env
+      .new_string(uri)
+      .map_err(|e| format!("URI SAF inválida: {e}"))?;
+    let uri_obj = env
+      .call_static_method(
+        "android/net/Uri",
+        "parse",
+        "(Ljava/lang/String;)Landroid/net/Uri;",
+        &[JValue::Object(&uri_string)],
+      )
+      .map_err(|e| format!("No se pudo parsear la URI SAF: {e}"))?
+      .l()
+      .map_err(|e| format!("URI SAF inválida: {e}"))?;
+    let mode = env
+      .new_string("wa")
+      .map_err(|e| format!("No se pudo crear el modo de apertura: {e}"))?;
+
+    let afd = env
+      .call_method(
+        &resolver,
+        "openAssetFileDescriptor",
+        "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/res/AssetFileDescriptor;",
+        &[JValue::Object(&uri_obj), JValue::Object(&mode)],
+      )
+      .map_err(|e| format!("No se pudo abrir el documento SAF en modo append: {e}"))?
+      .l()
+      .map_err(|e| format!("AssetFileDescriptor inválido: {e}"))?;
+
+    if env.exception_check().unwrap_or(false) {
+      return Err("Android rechazó abrir el documento SAF en modo append.".to_string());
+    }
+
+    let pfd = env
+      .call_method(
+        &afd,
+        "getParcelFileDescriptor",
+        "()Landroid/os/ParcelFileDescriptor;",
+        &[],
+      )
+      .map_err(|e| format!("No se pudo obtener el descriptor SAF: {e}"))?
+      .l()
+      .map_err(|e| format!("ParcelFileDescriptor inválido: {e}"))?;
+    let fd = env
+      .call_method(&pfd, "detachFd", "()I", &[])
+      .map_err(|e| format!("No se pudo separar el descriptor SAF: {e}"))?
+      .i()
+      .map_err(|e| format!("Descriptor SAF inválido: {e}"))?;
+
+    use std::io::Write;
+    use std::os::fd::FromRawFd;
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    file
+      .write_all(bytes)
+      .map_err(|e| format!("No se pudo agregar al documento SAF: {e}"))?;
+    file
+      .flush()
+      .map_err(|e| format!("No se pudo sincronizar el documento SAF: {e}"))?;
+    Ok(())
+  })();
+
+  if result.is_err() {
+    // Una excepción Java pendiente contaminaría las próximas llamadas JNI en
+    // este hilo. Se limpia sin ocultar el error, que ya se devuelve como texto.
+    let _ = env.exception_clear();
+  }
+  result
+}
+
+/* ------------------------------------------------------------------ */
 /* Borrado de una carpeta SAF (el plugin no expone remove_dir)        */
 /* ------------------------------------------------------------------ */
 

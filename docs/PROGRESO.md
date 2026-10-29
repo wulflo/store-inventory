@@ -2,8 +2,8 @@
 
 **Fecha de inicio de este registro:** 2026-10-27  
 **Versión publicada al iniciar:** `v0.2.5`  
-**Última versión publicada:** `v0.2.7`  
-**Estado actual:** correcciones de esta sesión en el árbol de trabajo, sin publicar.
+**Última versión publicada:** `v0.2.13`
+**Estado actual:** release `v0.3.0` preparado; tag y workflow pendientes de publicar.
 **Rama:** `main`
 
 > Este documento es la fuente de verdad para retomar el trabajo si se pierde el acceso a internet.
@@ -445,7 +445,7 @@ pruebas físicas pendientes están en **`docs/LIMITACIONES_CHECKLIST.md`**.
   data), no de la bóveda. `omega/writer.json` + `writer_touch` avisan si otro
   equipo abrió la bóveda en los últimos 10 minutos.
 - [ ] **Prueba física:** instalar la APK de release en un teléfono real y probar
-  Foldersync/Drive según la checklist.
+  un agente de sincronización externo según la checklist.
 
 Verificación de esta tanda:
 
@@ -489,4 +489,43 @@ Verificación:
 - [x] Smoke test en navegador: gasto de ARS 1.250 mostrado como `US$ 1,00` con
   cotización 1250; persistencia tras recargar y al alternar monedas.
 
-Pendiente: prueba física de la APK y sincronización Foldersync/Drive.
+Pendiente: prueba física de la APK y sincronización con un agente externo.
+
+---
+
+## 19. Release v0.3.0 (2026-10-28)
+
+Release de robustez de sincronización externa y restauración por dispositivo.
+El detalle técnico está en **`docs/SYNC_ROBUSTNESS_CHECKLIST.md`**.
+
+Cambios incluidos:
+
+- **Diario local (WAL):** cada evento se escribe antes en un diario fuera de la
+  bóveda; si un agente externo borra líneas, la reparación las vuelve a agregar.
+- **Copias de conflicto y huellas:** se leen `events/<dominio> (*).jsonl` y
+  `events/<dominio>.*.jsonl`; el poller compara tamaño + mtime y reconstruye el
+  estado desde cero cuando detecta cambios externos.
+- **Append real en Android/SAF:** se abre el documento en modo `"wa"` y se
+  refresca el índice SAF antes de escribir.
+- **Migraciones de cifrado seguras:** fingerprint antes/después, aborto sin
+  sobrescribir y copia `*.external-*` si el archivo cambió.
+- **Snapshots por dispositivo:** `<bóveda>/longlife/<dispositivo>/<fecha>/`,
+  manifiesto v2, copias legacy, 7 diarias + 3 `pre-restore-*` por dispositivo.
+- **Restauración desde la app:** valida hashes, crea copia previa, repara y
+  limpia el diario bajo `EVENTS_WRITE_LOCK`, reemplaza `omega` y bloquea la app.
+- **UX:** copias agrupadas por dispositivo, estado de cifrado, doble
+  confirmación y avisos de reparación al arrancar.
+- **Documentación:** se quitaron menciones a productos de sincronización de
+  terceros; se usa terminología genérica de agente externo/proveedor de nube.
+
+Verificación:
+
+- [x] `npm run typecheck`
+- [x] `npm test` — 59 tests
+- [x] `npm run build`
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml` — 77 pass, 1 ignored
+- [x] `cargo check` Android (aarch64-linux-android) con NDK 27
+
+Pendiente: prueba física de la APK y sincronización con un agente externo en un
+teléfono real. El release se publica con el tag `v0.3.0`; el workflow de GitHub
+Actions construye Linux, Windows y Android.

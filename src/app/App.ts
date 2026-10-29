@@ -27,7 +27,10 @@ export class App {
   readonly clock = new HybridLogicalClock();
 
   private listeners = new Set<(e: AppEvent) => void>();
-  private refreshing = false;
+  private reloading = false;
+  private reloadAgain = false;
+  /** Aviso de reparación ocurrido antes de que la UI se suscriba. */
+  startupNotice: string | null = null;
 
   constructor(public readonly store: EventStore, deviceId: string) {
     this.state = createEmptyState(deviceId);
@@ -44,31 +47,69 @@ export class App {
 
   async init(): Promise<void> {
     await this.store.init();
-    const events = await this.store.readAll();
-    this.projector.applyAll(events);
-    this.clock.resetTo(this.state.lastHlc);
+    await this.reloadAll('rebuild');
 
     // Observar cambios externos (otra app o equipo escribe en la carpeta).
-    await this.store.watch((domain) => {
-      void this.reloadDomain(domain);
+    await this.store.watch(() => {
+      void this.reloadAll('external');
     });
   }
 
-  /** Recarga un dominio (detectado por el watcher) y reproyecta. */
-  async reloadDomain(domain: Domain): Promise<void> {
-    if (this.refreshing) return;
-    this.refreshing = true;
-    try {
-      const events = await this.store.read(domain);
-      const projector = new Projector(this.state);
-      for (const ev of events) projector.apply(ev);
-      this.notify({ type: 'state', reason: `external:${domain}` });
-    } catch (err) {
-      console.error('reloadDomain', err);
-      this.notify({ type: 'error', message: 'No se pudo actualizar desde la carpeta de datos.' });
-    } finally {
-      this.refreshing = false;
+  /**
+   * Repara el diario local y reconstruye TODO el estado desde los archivos.
+   *
+   * Se usa al arrancar, tras restaurar un backup y cuando el watcher detecta
+   * un cambio externo. Reconstruir desde cero (en vez de aplicar el dominio
+   * sobre el estado actual) hace que las entidades que desaparecieron del
+   * archivo también desaparezcan de la UI; antes quedaban cacheadas y
+   * ocultaban la pérdida.
+   */
+  async reloadAll(reason = 'external'): Promise<void> {
+    if (this.reloading) {
+      this.reloadAgain = true;
+      return;
     }
+    this.reloading = true;
+    try {
+      do {
+        this.reloadAgain = false;
+        await this.rebuildFromDisk(reason);
+      } while (this.reloadAgain);
+    } finally {
+      this.reloading = false;
+    }
+  }
+
+  private async rebuildFromDisk(reason: string): Promise<void> {
+    let repaired = 0;
+    try {
+      const report = await this.store.repair();
+      repaired = report.repaired;
+      if (report.errors.length > 0) console.warn('journal repair', report.errors);
+    } catch (err) {
+      // Un fallo de reparación no debe impedir mostrar la bóveda.
+      console.warn('journal repair', err);
+    }
+
+    const events = await this.store.readAll();
+    this.state = createEmptyState(this.state.deviceId);
+    this.projector = new Projector(this.state);
+    this.projector.applyAll(sortEvents(events));
+    this.clock.resetTo(this.state.lastHlc);
+    reindexAll(this.state);
+    recomputeReservations(this.state);
+
+    if (repaired > 0) {
+      const message = `Se recuperaron ${repaired} evento(s) que habían desaparecido de la carpeta de datos.`;
+      if (this.listeners.size === 0) this.startupNotice = message;
+      else this.notify({ type: 'status', message });
+    }
+    this.notify({ type: 'state', reason });
+  }
+
+  /** Compatibilidad: recarga completa al detectar un dominio externo. */
+  async reloadDomain(domain: Domain): Promise<void> {
+    await this.reloadAll(`external:${domain}`);
   }
 
   /* -------------------------------------------------------------- */
@@ -156,13 +197,6 @@ export class App {
 
   /** Reconstruye todo el estado desde cero (usado tras restaurar un backup). */
   async rebuild(): Promise<void> {
-    const events = await this.store.readAll();
-    this.state = createEmptyState(this.state.deviceId);
-    this.projector = new Projector(this.state);
-    this.projector.applyAll(sortEvents(events));
-    this.clock.resetTo(this.state.lastHlc);
-    reindexAll(this.state);
-    recomputeReservations(this.state);
-    this.notify({ type: 'state', reason: 'rebuild' });
+    await this.reloadAll('rebuild');
   }
 }

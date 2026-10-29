@@ -128,4 +128,16 @@ describe('WebEventStore', () => {
 
     expect((await store.read('orders')).map((e) => e.id)).toEqual(['evt-1', 'evt-2', 'evt-3']);
   });
+
+  it('repair es no-op en OPFS y no altera los eventos', async () => {
+    useFakeOpfs();
+    const store = new WebEventStore();
+    await store.init();
+    await store.append('customers', [event(1)]);
+
+    const report = await store.repair();
+
+    expect(report).toMatchObject({ repaired: 0, pending: 0, stale: 0, errors: [] });
+    expect((await store.read('customers')).map((e) => e.id)).toEqual(['evt-1']);
+  });
 });

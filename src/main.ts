@@ -194,7 +194,7 @@ async function watchWriter(root: string, deviceId: string): Promise<void> {
     }
     // Latido para que otro equipo detecte que esta bóveda está en uso.
     // Cada 5 minutos: suficiente para la ventana de 10 minutos y evita
-    // generar escrituras constantes que Foldersync tenga que subir.
+    // generar escrituras constantes que el agente de sincronización tenga que subir.
     window.setInterval(() => {
       void invoke('writer_touch', { root, deviceId, deviceName: name }).catch(() => undefined);
     }, 5 * 60_000);
@@ -256,7 +256,7 @@ function registerRoutes(app: App, shell: Shell): void {
     if (store && typeof store.getRoot === 'function') {
       const elHost = el('div');
       mount(shell.outlet, elHost);
-      settingsBackupView(elHost, store);
+      settingsBackupView(elHost, store, app);
       return;
     }
     mount(shell.outlet, settingsView(app, shell));
