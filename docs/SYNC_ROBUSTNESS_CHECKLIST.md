@@ -450,7 +450,7 @@ Pendientes reales (no bloquean el uso diario):
    `docs/LIMITACIONES_CHECKLIST.md` ya actualizados).
 3. Layout por dispositivo/sesión (§9), opcional.
 
-> Cambios preparados para el release `v0.3.0` sobre la base `v0.2.13`
+> Cambios incluidos en el release `v0.3.0`, sobre la base `v0.2.13`
 > (`91d61d4`).
 
 ## 10. Cómo retomar después de un corte

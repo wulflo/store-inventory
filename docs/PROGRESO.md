@@ -3,7 +3,7 @@
 **Fecha de inicio de este registro:** 2026-10-27  
 **Versión publicada al iniciar:** `v0.2.5`  
 **Última versión publicada:** `v0.2.13`
-**Estado actual:** release `v0.3.0` preparado; tag y workflow pendientes de publicar.
+**Estado actual:** release `v0.3.0` con tag creado; workflow de publicación pendiente de confirmar.
 **Rama:** `main`
 
 > Este documento es la fuente de verdad para retomar el trabajo si se pierde el acceso a internet.
